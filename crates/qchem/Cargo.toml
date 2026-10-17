@@ -3,7 +3,6 @@ name = "qchem"
 version = "0.1.0"
 edition = "2021"
 description = "Small-molecule quantum chemistry (Hartree-Fock and DFT) for the browser and native"
-license = "MIT"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

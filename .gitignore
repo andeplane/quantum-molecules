@@ -5,3 +5,5 @@ dist
 __pycache__
 target
 crates/qchem-wasm/pkg
+test-results
+playwright-report
