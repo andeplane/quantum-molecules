@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quantum Molecules</title>
+    <meta name="description" content="Hartree-Fock and DFT for small molecules in the browser, with WebGPU electron clouds and orbitals." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%2714%27 fill=%27%235aa2ff%27 opacity=%270.35%27/%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%276%27 fill=%27%23e6e9f2%27/%3E%3C/svg%3E" />
+    <script type="module" crossorigin src="./assets/index-DUel3yu4.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DaRgPOvI.css">
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="no-gpu" class="banner" hidden></div>
+
+    <aside id="controls" class="panel">
+      <h1>Quantum Molecules</h1>
+      <p class="sub">Hartree–Fock and DFT in your browser</p>
+
+      <section>
+        <h2>Molecule</h2>
+        <label>Preset <select id="preset"></select></label>
+        <details id="xyz-box">
+          <summary>Paste XYZ (Å)</summary>
+          <textarea id="xyz" rows="7" spellcheck="false" placeholder="O 0 0 0.117&#10;H 0 0.757 -0.469&#10;H 0 -0.757 -0.469"></textarea>
+          <button id="load-xyz">Load</button>
+        </details>
+        <div class="row">
+          <label>Charge <input id="charge" type="number" step="1" value="0" /></label>
+          <label>Multiplicity <input id="multiplicity" type="number" min="1" step="1" value="1" /></label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Method</h2>
+        <div class="row">
+          <label
+            >Theory
+            <select id="method">
+              <option value="hf" title="Hartree–Fock (RHF, or UHF for open shells)">HF</option>
+              <option value="lda" title="Local density approximation (Slater + VWN5)">LDA</option>
+              <option value="pbe" title="PBE generalized-gradient functional">PBE</option>
+            </select>
+          </label>
+          <label
+            >Basis
+            <select id="basis">
+              <option value="sto-3g">STO-3G</option>
+              <option value="6-31g">6-31G</option>
+              <option value="6-31g*">6-31G*</option>
+            </select>
+          </label>
+        </div>
+        <div class="row buttons">
+          <button id="relax" class="primary">Relax geometry</button>
+          <button id="reset-geometry">Reset</button>
+        </div>
+        <p class="hint">Drag an atom to move it; the SCF re-runs as you drag. Drag empty space to rotate, scroll to zoom.</p>
+      </section>
+
+      <section>
+        <h2>View</h2>
+        <label class="check"><input id="show-cloud" type="checkbox" checked /> Electron density cloud</label>
+        <label>Cloud opacity <input id="cloud-opacity" type="range" min="0" max="1" step="0.01" value="0.4" /></label>
+        <label>Faintest density shown <input id="cloud-min" type="range" min="-5" max="-1" step="0.1" value="-2.5" /></label>
+        <label class="check"><input id="show-orbital" type="checkbox" checked /> Orbital isosurface</label>
+        <label>Isovalue <input id="iso" type="range" min="0.01" max="0.2" step="0.005" value="0.05" /></label>
+        <button id="save-image">Save image</button>
+      </section>
+    </aside>
+
+    <aside id="results" class="panel">
+      <h2>Results</h2>
+      <div id="status" class="status">Loading engine…</div>
+      <dl id="readouts"></dl>
+      <h2>Orbitals <span id="orbital-name" class="muted"></span></h2>
+      <svg id="diagram" role="img" aria-label="Orbital energy levels"></svg>
+      <p class="hint">Click a level to show that orbital (blue = positive, orange = negative lobe).</p>
+    </aside>
+
+    <footer id="playback" class="panel">
+      <button id="play-scf" title="Replay the SCF from the starting guess">▶ Play SCF</button>
+      <input id="scf-frame" type="range" min="0" max="0" value="0" disabled />
+      <span id="scf-label" class="muted">SCF iterations</span>
+    </footer>
+
+  </body>
+</html>
