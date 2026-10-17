@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "build:wasm": "wasm-pack build crates/qchem-wasm --target web --release --out-dir pkg",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
@@ -11,6 +12,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@webgpu/types": "^0.1.74",
     "typescript": "^5.9.3",
     "vite": "^7.3.7",

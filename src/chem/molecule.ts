@@ -22,32 +22,24 @@ export function electronCount(mol: Molecule): number {
   return mol.atoms.reduce((n, a) => n + nuclearCharge(a), 0) - mol.charge;
 }
 
-export function nuclearRepulsion(atoms: Atom[]): number {
-  let e = 0;
+/** Bond if closer than the scaled sum of covalent radii. Pairs of atom indices. */
+export function bonds(atoms: Atom[], scale = 1.25): [number, number][] {
+  const out: [number, number][] = [];
   for (let i = 0; i < atoms.length; i++) {
     for (let j = 0; j < i; j++) {
       const [x, y, z] = atoms[i].xyz;
       const [u, v, w] = atoms[j].xyz;
-      e += (nuclearCharge(atoms[i]) * nuclearCharge(atoms[j])) / Math.hypot(x - u, y - v, z - w);
+      const r = Math.hypot(x - u, y - v, z - w) / BOHR_PER_ANGSTROM;
+      if (r < scale * (element(atoms[i].symbol).covalentRadius + element(atoms[j].symbol).covalentRadius)) out.push([j, i]);
     }
   }
-  return e;
+  return out;
 }
 
-export function nuclearRepulsionGradient(atoms: Atom[]): Float64Array {
-  const g = new Float64Array(atoms.length * 3);
-  for (let i = 0; i < atoms.length; i++) {
-    for (let j = 0; j < i; j++) {
-      const d = [0, 1, 2].map((k) => atoms[i].xyz[k] - atoms[j].xyz[k]);
-      const r = Math.hypot(d[0], d[1], d[2]);
-      const f = (-nuclearCharge(atoms[i]) * nuclearCharge(atoms[j])) / (r * r * r);
-      for (let k = 0; k < 3; k++) {
-        g[3 * i + k] += f * d[k];
-        g[3 * j + k] -= f * d[k];
-      }
-    }
-  }
-  return g;
+/** Shift atoms so their geometric centre is at the origin. */
+export function centered(atoms: Atom[]): Atom[] {
+  const c = [0, 1, 2].map((k) => atoms.reduce((s, a) => s + a.xyz[k], 0) / Math.max(atoms.length, 1));
+  return atoms.map((a) => ({ symbol: a.symbol, xyz: [a.xyz[0] - c[0], a.xyz[1] - c[1], a.xyz[2] - c[2]] }));
 }
 
 /** Parse an XYZ block (Angstrom). The first two lines may be the usual count and comment lines. */
