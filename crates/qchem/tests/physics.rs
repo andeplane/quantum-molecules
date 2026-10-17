@@ -264,3 +264,90 @@ fn parses_xyz_input() {
     assert!(parse_xyz("nothing here").is_err());
     assert!(parse_xyz("Xx 0 0 0").is_err());
 }
+
+/// <previous_a | new_b> for the orbitals of two results, using the new geometry's overlap.
+fn orbital_overlap(prev: &qchem::ScfResult, new: &qchem::ScfResult) -> Vec<f64> {
+    use qchem::linalg::{matmul, transpose};
+    let s = qchem::one_electron::one_electron_matrices(&new.basis, &[]).s;
+    let (n, m) = (new.nbf, new.nmo);
+    matmul(
+        &transpose(&prev.ca, n, m),
+        &matmul(&s, &new.ca, n, n, m),
+        m,
+        n,
+        m,
+    )
+}
+
+#[test]
+fn orbital_phases_follow_a_dragged_atom() {
+    // Dragging a hydrogen in small steps, as the app does: every orbital must keep its sign,
+    // otherwise the orbital isosurface flips colour from frame to frame.
+    let o = opts(BasisName::B631g, "hf");
+    let mut mol = water();
+    let mut prev = run_scf(&mol, &o, None).unwrap();
+    for step in 0..12 {
+        mol.atoms[1].xyz[1] += 0.03;
+        mol.atoms[1].xyz[2] += if step % 2 == 0 { 0.02 } else { -0.01 };
+        let next = run_scf(&mol, &o, Some(&prev.guess())).unwrap();
+        let ov = orbital_overlap(&prev, &next);
+        for k in 0..next.nalpha + 2 {
+            assert!(
+                ov[k * next.nmo + k] > 0.9,
+                "step {step}, orbital {k}: overlap {}",
+                ov[k * next.nmo + k]
+            );
+        }
+        prev = next;
+    }
+}
+
+#[test]
+fn cold_starts_give_identical_orbitals() {
+    let o = opts(BasisName::B631gStar, "hf");
+    let a = run_scf(&distorted_water(), &o, None).unwrap();
+    let b = run_scf(&distorted_water(), &o, None).unwrap();
+    assert!(max_abs_diff(&a.ca, &b.ca) < 1e-12);
+    // Convention without a reference: the largest coefficient of each orbital is positive.
+    for k in 0..a.nmo {
+        let col: Vec<f64> = (0..a.nbf).map(|i| a.ca[i * a.nmo + k]).collect();
+        let big = col
+            .iter()
+            .cloned()
+            .fold(0.0_f64, |m, v| if v.abs() > m.abs() { v } else { m });
+        assert!(big > 0.0, "orbital {k}");
+    }
+}
+
+#[test]
+fn degenerate_orbitals_follow_the_previous_ones() {
+    // N2's pi orbitals come in degenerate pairs that any rotation of solves equally well; after
+    // stretching the bond they must stay aligned with the previous pair, not spin around.
+    let o = opts(BasisName::B631gStar, "hf");
+    let ang = BOHR_PER_ANGSTROM;
+    let n2 = |r: f64| {
+        Molecule::new(
+            vec![
+                Atom::new("N", [0.0, 0.0, -r / 2.0 * ang]).unwrap(),
+                Atom::new("N", [0.0, 0.0, r / 2.0 * ang]).unwrap(),
+            ],
+            0,
+            1,
+        )
+    };
+    let prev = run_scf(&n2(1.098), &o, None).unwrap();
+    let next = run_scf(&n2(1.12), &o, Some(&prev.guess())).unwrap();
+    let ov = orbital_overlap(&prev, &next);
+    let m = next.nmo;
+    for k in 0..next.nalpha + 2 {
+        assert!(
+            ov[k * m + k] > 0.99,
+            "orbital {k}: overlap {}",
+            ov[k * m + k]
+        );
+    }
+    // The energy and density are untouched by the alignment.
+    let cold = run_scf(&n2(1.12), &o, None).unwrap();
+    assert!((cold.energy - next.energy).abs() < 1e-9);
+    assert!(max_abs_diff(&cold.da, &next.da) < 1e-6);
+}

@@ -69,6 +69,27 @@ describe('Session', () => {
     session.free();
   });
 
+  it('keeps orbital signs stable while an atom is dragged', () => {
+    // The HOMO is drawn with blue and orange lobes; a sign flip between frames swaps them.
+    const session = new qchem.Session();
+    const input = { ...inputFor(refCase('h2o', 'sto-3g')), basis: '6-31g' as const };
+    let prev = compute(input, session);
+    let atoms = input.atoms.map((a) => ({ ...a, xyz: [...a.xyz] as [number, number, number] }));
+    for (let step = 0; step < 10; step++) {
+      atoms = atoms.map((a, i) => (i === 1 ? { ...a, xyz: [a.xyz[0] + 0.01, a.xyz[1] + 0.04, a.xyz[2]] } : a));
+      const next = compute({ ...input, atoms }, session);
+      const homo = next.nalpha - 1;
+      // Same basis-function layout, small move: coefficient vectors should point the same way.
+      for (const k of [homo, homo + 1]) {
+        let d = 0;
+        for (let i = 0; i < next.nbf; i++) d += prev.ca[i * next.nmo + k] * next.ca[i * next.nmo + k];
+        expect(d, `step ${step}, orbital ${k}`).toBeGreaterThan(0);
+      }
+      prev = next;
+    }
+    session.free();
+  });
+
   it('records the SCF history for playback', () => {
     const out = compute(inputFor(water, { history: true }));
     expect(out.history.length).toBe(out.iterations);

@@ -164,6 +164,71 @@ fn orthonormalize(c: &[f64], s: &[f64], n: usize, m: usize) -> Vec<f64> {
     matmul(c, &inv, n, m, m)
 }
 
+/// Orbitals within this energy (Hartree) of each other count as degenerate when aligning phases.
+const DEGENERACY: f64 = 1e-5;
+
+/// Fix the arbitrary phase (and, for degenerate levels, the arbitrary rotation) of the orbitals
+/// in `c` so that results change smoothly from one geometry to the next. With a reference (the
+/// previous orbitals) each group of degenerate orbitals is rotated to overlap it as much as
+/// possible; without one, each orbital's largest coefficient is made positive. Groups never mix
+/// occupied (index < `nocc`) with empty orbitals, so the density is unchanged.
+fn align_orbitals(
+    c: &mut [f64],
+    eps: &[f64],
+    nocc: usize,
+    reference: Option<&[f64]>,
+    s: &[f64],
+    n: usize,
+    m: usize,
+) {
+    let Some(r) = reference else {
+        for k in 0..m {
+            let big = (0..n).max_by(|&a, &b| c[a * m + k].abs().total_cmp(&c[b * m + k].abs()));
+            if let Some(i) = big {
+                if c[i * m + k] < 0.0 {
+                    (0..n).for_each(|j| c[j * m + k] = -c[j * m + k]);
+                }
+            }
+        }
+        return;
+    };
+    // overlap[a][b] = <reference_a | new_b>
+    let sc = matmul(s, c, n, n, m);
+    let overlap = matmul(&transpose(r, n, m), &sc, m, n, m);
+    let mut start = 0;
+    while start < m {
+        let mut end = start + 1;
+        while end < m && end != nocc && (eps[end] - eps[end - 1]).abs() < DEGENERACY {
+            end += 1;
+        }
+        let g = end - start;
+        // O[a][b] for the group; the rotation U = O^T (O O^T)^(-1/2) maximizes tr(O U).
+        let o: Vec<f64> = (0..g * g)
+            .map(|q| overlap[(start + q / g) * m + start + q % g])
+            .collect();
+        let oot = matmul(&o, &transpose(&o, g, g), g, g, g);
+        let e = eigh(&oot, g);
+        if e.values.iter().all(|&v| v > 1e-10) {
+            let mut inv_sqrt = vec![0.0; g * g];
+            for i in 0..g {
+                for j in 0..g {
+                    inv_sqrt[i * g + j] = (0..g)
+                        .map(|k| e.vectors[i * g + k] * e.vectors[j * g + k] / e.values[k].sqrt())
+                        .sum();
+                }
+            }
+            let u = matmul(&transpose(&o, g, g), &inv_sqrt, g, g, g);
+            for i in 0..n {
+                let row: Vec<f64> = (0..g).map(|b| c[i * m + start + b]).collect();
+                for a in 0..g {
+                    c[i * m + start + a] = (0..g).map(|b| row[b] * u[b * g + a]).sum();
+                }
+            }
+        }
+        start = end;
+    }
+}
+
 type AtomCache = Mutex<HashMap<(u32, BasisName), Vec<f64>>>;
 
 /// Spherically averaged atomic density from fractional-occupation restricted HF on the free atom.
@@ -510,6 +575,40 @@ pub fn run_scf(
         } else {
             da.clone()
         };
+    }
+
+    let reference = match guess {
+        Some(g) if g.basis == opts.basis && g.nbf == n && g.nmo == nmo => Some(g),
+        _ => None,
+    };
+    align_orbitals(
+        &mut ca,
+        &eps_a,
+        nalpha,
+        reference.map(|g| g.ca.as_slice()),
+        &s,
+        n,
+        nmo,
+    );
+    if unrestricted {
+        align_orbitals(
+            &mut cb,
+            &eps_b,
+            nbeta,
+            reference.map(|g| g.cb.as_slice()),
+            &s,
+            n,
+            nmo,
+        );
+    } else {
+        cb = ca.clone();
+    }
+    // Playback frames get the converged orbitals' phases, so they do not flicker either.
+    // Distinct stand-in energies, so each orbital is only sign-aligned.
+    let order: Vec<f64> = (0..nmo).map(|k| k as f64).collect();
+    for it in &mut history {
+        align_orbitals(&mut it.ca, &order, 0, Some(&ca), &s, n, nmo);
+        align_orbitals(&mut it.cb, &order, 0, Some(&cb), &s, n, nmo);
     }
 
     let dip = dipole_matrices(&basis);
