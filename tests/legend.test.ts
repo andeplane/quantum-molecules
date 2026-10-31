@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseXyz } from '../src/chem/molecule';
-import { preset } from '../src/chem/presets';
+import { BLURBS, PRESETS, preset } from '../src/chem/presets';
+import { TIPS, currentTip } from '../src/ui/tips';
 import { CLOUD_RAMP, LOBE_NEGATIVE, LOBE_POSITIVE, css, describeOrbital, legendElements } from '../src/ui/legend';
 
 const shader = readFileSync(new URL('../src/render/raymarch.wgsl', import.meta.url), 'utf8');
@@ -44,5 +45,19 @@ describe('legend', () => {
 
   it('formats CSS colours', () => {
     expect(css([1, 0.5, 0])).toBe('rgb(255, 128, 0)');
+  });
+});
+
+describe('newcomer text', () => {
+  it('has a blurb for every preset', () => {
+    for (const p of PRESETS) expect(BLURBS[p.id], p.id).toMatch(/\.$/);
+  });
+
+  it('walks through the tips in order, skipping what was already done', () => {
+    expect(currentTip(new Set())?.until).toBe('drag');
+    expect(currentTip(new Set(['drag']))?.until).toBe('relax');
+    expect(currentTip(new Set(['drag', 'orbital']))?.until).toBe('relax');
+    expect(currentTip(new Set(['drag', 'relax', 'orbital']))?.until).toBe('preset');
+    expect(currentTip(new Set(TIPS.map((t) => t.until)))).toBeNull();
   });
 });

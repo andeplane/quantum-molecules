@@ -52,7 +52,7 @@ body {
 #controls {
   top: 12px;
   left: 12px;
-  width: 260px;
+  width: 280px;
   max-height: calc(100% - 24px);
   overflow-y: auto;
 }
@@ -235,9 +235,10 @@ dd {
   stroke: #c9d3ea;
 }
 
+/* White rather than orange, so it does not read as the negative orbital lobe. */
 #diagram .selected line {
-  stroke: var(--warn);
-  stroke-width: 3;
+  stroke: #ffffff;
+  stroke-width: 3.5;
 }
 
 #diagram .level:hover line {
@@ -325,7 +326,7 @@ button.link {
   justify-content: center;
   gap: 6px 18px;
   padding: 7px 14px;
-  max-width: calc(100% - 590px);
+  max-width: calc(100% - 610px);
   width: max-content;
 }
 
@@ -413,8 +414,8 @@ button.link {
 }
 
 #intro .lead {
-  font-size: 14px;
-  margin: 8px 0 0;
+  font-size: 15px;
+  margin: 8px 0 16px;
 }
 
 #intro p,
@@ -461,4 +462,91 @@ button.link {
   #legend {
     display: none;
   }
+}
+
+/* ---- newcomer guidance ----------------------------------------------------------------------- */
+
+#help {
+  flex: none;
+  border-color: rgba(90, 162, 255, 0.5);
+  color: #cfe1ff;
+  font-weight: 600;
+}
+
+.blurb {
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+
+#controls details > summary {
+  margin: 10px 0 4px;
+}
+
+
+.energy {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+#results .hint {
+  margin: 2px 0 6px;
+}
+
+#more-numbers summary {
+  margin: 10px 0 6px;
+}
+
+#labels {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+#labels span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-weight: 700;
+  font-size: 12px;
+  color: #fff;
+  text-shadow:
+    0 0 3px #000,
+    0 0 6px #000;
+}
+
+#tip {
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(560px, calc(100% - 24px));
+  border-color: rgba(90, 162, 255, 0.55);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+#tip[hidden] {
+  display: none;
+}
+
+#tip button {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+#legend-title {
+  white-space: nowrap;
+}
+
+.intro-actions button.link {
+  padding: 0;
+}
+
+#intro-more > summary {
+  color: var(--accent);
+  margin: 12px 0 8px;
 }

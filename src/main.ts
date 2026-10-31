@@ -1,5 +1,5 @@
 import { electronCount, parseXyz, toXyz, type Atom } from './chem/molecule';
-import { PRESETS, preset } from './chem/presets';
+import { BLURBS, PRESETS, preset } from './chem/presets';
 import { orbitalLevels } from './chem/orbitals';
 import { EngineClient } from './engine/client';
 import type { BasisName, ComputeInput, ComputeOutput, MethodName } from './engine/types';
@@ -11,6 +11,7 @@ import { readouts } from './ui/format';
 import { describeOrbital, legendElements } from './ui/legend';
 import { renderDiagram } from './ui/orbital-diagram';
 import { atomRadius, boundingSphere, buildScene } from './ui/scene';
+import { currentTip, type TipEvent } from './ui/tips';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -47,6 +48,17 @@ const ui = {
   legendOrbitalName: $('legend-orbital-name'),
   legendAtoms: $('legend-atoms'),
   legendHelp: $<HTMLButtonElement>('legend-help'),
+  legendTitle: $('legend-title'),
+  presetBlurb: $('preset-blurb'),
+  settingsSummary: $('settings-summary'),
+  energy: $('energy'),
+  labels: $('labels'),
+  tip: $('tip'),
+  tipText: $('tip-text'),
+  tipClose: $<HTMLButtonElement>('tip-close'),
+  restartTips: $<HTMLButtonElement>('restart-tips'),
+  introMore: $<HTMLDetailsElement>('intro-more'),
+  settings: $<HTMLDetailsElement>('settings'),
 };
 
 interface State {
@@ -143,8 +155,29 @@ function frameLoop() {
     needsRender = false;
     resizeCanvas();
     renderer.render(camera, viewSettings());
+    placeLabels();
   }
   requestAnimationFrame(frameLoop);
+}
+
+/** Element symbols drawn over the atoms, so nobody has to decode the colours. */
+function placeLabels() {
+  const atoms = state.atoms;
+  while (ui.labels.children.length < atoms.length) ui.labels.append(document.createElement('span'));
+  while (ui.labels.children.length > atoms.length) ui.labels.lastElementChild!.remove();
+  const m = camera.viewProjection;
+  const r = ui.canvas.getBoundingClientRect();
+  atoms.forEach((a, i) => {
+    const el = ui.labels.children[i] as HTMLElement;
+    const [x, y, z] = a.xyz;
+    const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+    el.textContent = a.symbol;
+    el.hidden = w <= 0;
+    if (w <= 0) return;
+    const sx = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w;
+    const sy = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w;
+    el.style.transform = `translate(${r.left + ((sx + 1) / 2) * r.width}px, ${r.top + ((1 - sy) / 2) * r.height}px) translate(-50%, -50%)`;
+  });
 }
 
 function resizeCanvas() {
@@ -172,7 +205,8 @@ function showResult(res: ComputeOutput, keepHistory = false) {
   ui.scfFrame.max = String(Math.max(0, res.history.length - 1));
   ui.scfFrame.value = ui.scfFrame.max;
   ui.scfFrame.disabled = res.history.length === 0;
-  ui.scfLabel.textContent = res.history.length ? `iteration ${res.history.length} of ${res.history.length}` : 'SCF iterations';
+  ui.scfLabel.textContent = res.history.length ? `step ${res.history.length} of ${res.history.length}` : 'calculation steps';
+  ui.energy.textContent = `${res.energy.toFixed(5)} Ha`;
   ui.readouts.replaceChildren(
     ...readouts(res).flatMap((r) => {
       const dt = document.createElement('dt');
@@ -190,23 +224,27 @@ function showResult(res: ComputeOutput, keepHistory = false) {
 function drawDiagram() {
   const res = state.result;
   if (!res) return;
-  renderDiagram(ui.diagram, res, state.orbital, (sel) => {
+  const shown = ui.showOrbital.checked && state.orbital !== null;
+  renderDiagram(ui.diagram, res, shown ? state.orbital : null, (sel) => {
     state.orbital = sel;
     ui.showOrbital.checked = true;
     drawDiagram();
     updateVolume();
+    tipDone('orbital');
   });
-  if (state.orbital) {
+  ui.orbitalName.textContent = '';
+  if (shown && state.orbital) {
     const level = orbitalLevels(res, state.orbital.spin)[state.orbital.index];
     const name = `${level.label}${res.unrestricted ? (state.orbital.spin === 'alpha' ? ' α' : ' β') : ''}`;
     ui.orbitalName.textContent = `· ${name}`;
     ui.legendOrbitalName.textContent = `${name} orbital`;
-    ui.legendOrbital.title = `${name}: ${describeOrbital(level.label)}. Blue where its wavefunction is positive, orange where it is negative; where they meet is a node, where this orbital's electrons are never found.`;
+    ui.legendOrbital.title = `${name}: ${describeOrbital(level.label)}. Blue where its wave is positive, orange where it is negative; where they meet, these electrons are never found.`;
   }
   updateLegend();
 }
 
 function updateLegend() {
+  ui.legendTitle.textContent = ui.preset.value === 'custom' ? 'Your molecule' : (PRESETS.find((p) => p.id === ui.preset.value)?.name ?? '');
   ui.legendCloud.hidden = !ui.showCloud.checked;
   ui.legendOrbital.hidden = !(ui.showOrbital.checked && state.orbital);
   ui.legendAtoms.replaceChildren(
@@ -224,17 +262,17 @@ function updateLegend() {
 }
 
 function describe(res: ComputeOutput) {
-  return `${res.energy.toFixed(6)} Ha · ${res.iterations} iterations · ${Math.round(res.millis)} ms`;
+  return `Solved in ${Math.round(res.millis)} ms (${res.iterations} steps)`;
 }
 
 async function recompute(opts: { history?: boolean } = {}) {
   if (state.atoms.length === 0) return;
-  setStatus('Solving the SCF…', 'busy');
+  setStatus('Solving…', 'busy');
   try {
     const res = await engine.computeLatest(input({ history: opts.history ?? true }));
     if (!res) return;
     showResult(res);
-    setStatus(res.converged ? describe(res) : `SCF did not converge (${res.iterations} iterations)`, res.converged ? 'ok' : 'error');
+    setStatus(res.converged ? describe(res) : `The calculation did not settle after ${res.iterations} steps`, res.converged ? 'ok' : 'error');
   } catch (e) {
     setStatus(e instanceof Error ? e.message : String(e), 'error');
   }
@@ -257,6 +295,8 @@ function setMolecule(atoms: Atom[], charge: number, multiplicity: number) {
   engine.reset();
   const { center, radius } = boundingSphere(atoms);
   camera.fit(center, radius);
+  syncSettingsSummary();
+  ui.presetBlurb.textContent = BLURBS[ui.preset.value] ?? 'Your own molecule. Drag its atoms, relax it, and look at its orbitals like any other.';
   updateScene();
   updateLegend();
   recompute();
@@ -303,8 +343,9 @@ function relax() {
     },
     onDone: (converged, steps) => {
       state.relaxId = null;
+      tipDone('relax');
       ui.relax.textContent = 'Relax geometry';
-      setStatus(converged ? `Relaxed in ${steps} steps · ${describe(state.result!)}` : `Stopped after ${steps} steps without converging`, converged ? 'ok' : 'error');
+      setStatus(converged ? `Relaxed in ${steps} steps · ${state.result!.energy.toFixed(6)} Ha` : `Stopped after ${steps} steps without converging`, converged ? 'ok' : 'error');
     },
     onError: (message) => {
       state.relaxId = null;
@@ -319,7 +360,7 @@ function relax() {
 function stopPlayback() {
   if (playTimer !== null) clearInterval(playTimer);
   playTimer = null;
-  ui.playScf.textContent = '▶ Play SCF';
+  ui.playScf.textContent = '▶ Watch it solve';
 }
 
 function showFrame(k: number) {
@@ -328,7 +369,7 @@ function showFrame(k: number) {
   state.frame = k >= res.history.length - 1 ? null : k;
   ui.scfFrame.value = String(k);
   const h = res.history[k];
-  ui.scfLabel.textContent = `iteration ${k + 1} of ${res.history.length} · E = ${h.energy.toFixed(6)} · error ${h.error.toExponential(1)}`;
+  ui.scfLabel.textContent = `step ${k + 1} of ${res.history.length} · E = ${h.energy.toFixed(6)} Ha · error ${h.error.toExponential(1)}`;
   updateVolume();
 }
 
@@ -336,7 +377,7 @@ async function playScf() {
   if (playTimer !== null) return stopPlayback();
   cancelRelax();
   // Replay from the atomic-density guess, which is more instructive than a warm start.
-  setStatus('Recording SCF iterations…', 'busy');
+  setStatus('Recording the calculation…', 'busy');
   const res = await engine.compute(input({ history: true, warmStart: false })).catch((e: Error) => {
     setStatus(e.message, 'error');
     return null;
@@ -417,6 +458,7 @@ ui.canvas.addEventListener('pointermove', (ev) => {
 });
 
 const endDrag = () => {
+  if (drag?.kind === 'atom') tipDone('drag');
   drag = null;
   ui.canvas.classList.remove('dragging');
 };
@@ -438,8 +480,13 @@ window.addEventListener('resize', () => (needsRender = true));
 for (const p of PRESETS) ui.preset.add(new Option(p.name, p.id));
 ui.preset.add(new Option('Custom (pasted XYZ)', 'custom'));
 ui.preset.addEventListener('change', () => {
-  if (ui.preset.value === 'custom') ui.xyzBox.open = true;
-  else loadPreset(ui.preset.value);
+  if (ui.preset.value === 'custom') {
+    ui.settings.open = true;
+    ui.xyzBox.open = true;
+  } else {
+    loadPreset(ui.preset.value);
+    tipDone('preset');
+  }
 });
 ui.loadXyz.addEventListener('click', () => {
   try {
@@ -469,10 +516,12 @@ ui.multiplicity.addEventListener('change', () => {
 });
 ui.method.addEventListener('change', () => {
   state.method = ui.method.value as MethodName;
+  syncSettingsSummary();
   recompute();
 });
 ui.basis.addEventListener('change', () => {
   state.basis = ui.basis.value as BasisName;
+  syncSettingsSummary();
   recompute();
 });
 ui.relax.addEventListener('click', relax);
@@ -489,7 +538,8 @@ ui.showCloud.addEventListener('input', () => {
 });
 ui.showOrbital.addEventListener('input', () => {
   if (ui.showOrbital.checked && !state.orbital && state.result) state.orbital = defaultOrbital(state.result);
-  updateLegend();
+  if (ui.showOrbital.checked) tipDone('orbital');
+  drawDiagram();
   needsRender = true;
 });
 ui.playScf.addEventListener('click', playScf);
@@ -511,39 +561,90 @@ const INTRO_SEEN = 'quantum-molecules:intro-seen';
 
 function showIntro(section?: string) {
   if (!ui.intro.open) ui.intro.showModal();
-  if (section) document.getElementById(section)?.scrollIntoView({ block: 'start' });
-  else ui.intro.scrollTop = 0;
+  ui.tip.hidden = true;
+  if (section) {
+    ui.introMore.open = true;
+    document.getElementById(section)?.scrollIntoView({ block: 'start' });
+  } else ui.intro.scrollTop = 0;
 }
 
 ui.help.addEventListener('click', () => showIntro());
 ui.legendHelp.addEventListener('click', () => showIntro('intro-colors'));
 ui.intro.addEventListener('close', () => {
-  try {
-    localStorage.setItem(INTRO_SEEN, '1');
-  } catch {
-    // Storage can be blocked; the intro then just shows again next time.
-  }
+  remember(INTRO_SEEN);
+  showTip();
 });
 // A click on the backdrop lands on the dialog element itself.
 ui.intro.addEventListener('click', (ev) => {
   if (ev.target === ui.intro) ui.intro.close();
 });
 
-function introSeen(): boolean {
+// Storage can be blocked; the intro and tips then just show again next time.
+function remember(key: string, value: boolean = true) {
   try {
-    return localStorage.getItem(INTRO_SEEN) !== null;
+    if (value) localStorage.setItem(key, '1');
+    else localStorage.removeItem(key);
+  } catch {
+    // Nothing to do.
+  }
+}
+
+function remembered(key: string): boolean {
+  try {
+    return localStorage.getItem(key) !== null;
   } catch {
     return false;
   }
 }
 
+// ---- tips -------------------------------------------------------------------------------------
+
+const TIPS_DONE = 'quantum-molecules:tips-done';
+const tipEvents = new Set<TipEvent>();
+let tipsOn = false;
+
+function showTip() {
+  const tip = tipsOn ? currentTip(tipEvents) : null;
+  if (tip === null && tipsOn) {
+    tipsOn = false;
+    remember(TIPS_DONE);
+  }
+  ui.tip.hidden = tip === null || ui.intro.open;
+  if (tip) ui.tipText.innerHTML = tip.html;
+}
+
+function tipDone(event: TipEvent) {
+  tipEvents.add(event);
+  showTip();
+}
+
+ui.tipClose.addEventListener('click', () => {
+  tipsOn = false;
+  remember(TIPS_DONE);
+  showTip();
+});
+ui.restartTips.addEventListener('click', () => {
+  tipEvents.clear();
+  tipsOn = true;
+  remember(TIPS_DONE, false);
+  ui.intro.close();
+});
+
+function syncSettingsSummary() {
+  ui.settingsSummary.textContent = `(${ui.method.selectedOptions[0]?.text}, ${ui.basis.selectedOptions[0]?.text})`;
+}
+
 // ---- start ------------------------------------------------------------------------------------
 
 async function start() {
-  // Tests run with ?headless, which skips the intro unless ?intro is also given.
-  if ((!headless || new URLSearchParams(location.search).has('intro')) && !introSeen()) showIntro();
+  // Tests run with ?headless, which skips the intro and tips unless ?intro is also given.
+  const guide = !headless || new URLSearchParams(location.search).has('intro');
+  tipsOn = guide && !remembered(TIPS_DONE);
+  if (guide && !remembered(INTRO_SEEN)) showIntro();
+  else showTip();
   ui.method.value = state.method;
   ui.basis.value = state.basis;
+  syncSettingsSummary();
   try {
     renderer = await Renderer.create(headless ? null : ui.canvas);
     renderer.device.lost.then((info) => setStatus(`The GPU device was lost: ${info.message}`, 'error'));

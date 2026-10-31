@@ -82,3 +82,19 @@ export function preset(id: string): Preset {
   if (!p) throw new Error(`Unknown preset ${id}`);
   return p;
 }
+
+/** One or two plain-language sentences about each preset, for people new to chemistry. */
+export const BLURBS: Record<string, string> = {
+  h2: 'The simplest molecule: two hydrogen atoms sharing their two electrons in one bond.',
+  h2o: 'Oxygen pulls the shared electrons toward itself and leaves the hydrogens slightly positive. That imbalance is what makes water such a good solvent.',
+  nh3: 'Nitrogen bonds three hydrogens and keeps one pair of electrons to itself, which pushes the molecule into a pyramid.',
+  ch4: 'Carbon shares its four outer electrons with four hydrogens, which point to the corners of a tetrahedron.',
+  hf: 'Fluorine pulls on electrons harder than any other element, so this bond is very lopsided.',
+  n2: 'A triple bond, one of the strongest in chemistry. It is why the nitrogen that makes up most of the air hardly reacts.',
+  co2: 'Two double bonds in a straight line. Each bond is lopsided, but they point in opposite directions and cancel out.',
+  ch2o: 'A carbon–oxygen double bond, the group at the heart of sugars and many other molecules of life.',
+  c2h4: 'A carbon–carbon double bond. Show the HOMO orbital to see the extra bond lying above and below the molecule.',
+  c6h6: 'Six electrons shared around the whole ring instead of sitting in fixed bonds. It uses the quickest settings to stay smooth.',
+  oh: 'A radical: one electron has no partner, which makes it extremely reactive.',
+  o2: 'The oxygen we breathe has two unpaired electrons, which is why liquid oxygen sticks to a magnet.',
+};
