@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Quantum Molecules</title>
-    <meta name="description" content="Hartree-Fock and DFT for small molecules in the browser, with WebGPU electron clouds and orbitals." />
+    <meta name="description" content="See the electrons in a molecule: real quantum chemistry (Hartree-Fock and DFT) running live in your browser, with WebGPU electron clouds and orbitals." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%2714%27 fill=%27%235aa2ff%27 opacity=%270.35%27/%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%276%27 fill=%27%23e6e9f2%27/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
@@ -13,74 +13,171 @@
     <div id="no-gpu" class="banner" hidden></div>
 
     <aside id="controls" class="panel">
-      <h1>Quantum Molecules</h1>
-      <p class="sub">Hartree–Fock and DFT in your browser</p>
+      <header class="title">
+        <div>
+          <h1>Quantum Molecules</h1>
+          <p class="sub">Real quantum chemistry, live in your browser</p>
+        </div>
+        <button id="help" title="What am I looking at?">? Help</button>
+      </header>
 
       <section>
         <h2>Molecule</h2>
-        <label>Preset <select id="preset"></select></label>
-        <details id="xyz-box">
-          <summary>Paste XYZ (Å)</summary>
-          <textarea id="xyz" rows="7" spellcheck="false" placeholder="O 0 0 0.117&#10;H 0 0.757 -0.469&#10;H 0 -0.757 -0.469"></textarea>
-          <button id="load-xyz">Load</button>
-        </details>
-        <div class="row">
-          <label>Charge <input id="charge" type="number" step="1" value="0" /></label>
-          <label>Multiplicity <input id="multiplicity" type="number" min="1" step="1" value="1" /></label>
-        </div>
-      </section>
-
-      <section>
-        <h2>Method</h2>
-        <div class="row">
-          <label
-            >Theory
-            <select id="method">
-              <option value="hf" title="Hartree–Fock (RHF, or UHF for open shells)">HF</option>
-              <option value="lda" title="Local density approximation (Slater + VWN5)">LDA</option>
-              <option value="pbe" title="PBE generalized-gradient functional">PBE</option>
-            </select>
-          </label>
-          <label
-            >Basis
-            <select id="basis">
-              <option value="sto-3g">STO-3G</option>
-              <option value="6-31g">6-31G</option>
-              <option value="6-31g*">6-31G*</option>
-            </select>
-          </label>
-        </div>
+        <select id="preset" aria-label="Molecule"></select>
+        <p id="preset-blurb" class="blurb"></p>
         <div class="row buttons">
-          <button id="relax" class="primary">Relax geometry</button>
-          <button id="reset-geometry">Reset</button>
+          <button id="relax" class="primary" title="Let the atoms move until the energy is as low as it gets">Relax geometry</button>
+          <button id="reset-geometry" title="Put the atoms back where they started">Reset</button>
         </div>
-        <p class="hint">Drag an atom to move it; the SCF re-runs as you drag. Drag empty space to rotate, scroll to zoom.</p>
+        <p class="hint">Drag an atom to move it. Drag empty space to rotate, scroll to zoom.</p>
       </section>
 
       <section>
-        <h2>View</h2>
-        <label class="check"><input id="show-cloud" type="checkbox" checked /> Electron density cloud</label>
-        <label>Cloud opacity <input id="cloud-opacity" type="range" min="0" max="1" step="0.01" value="0.4" /></label>
-        <label>Faintest density shown <input id="cloud-min" type="range" min="-5" max="-1" step="0.1" value="-2.5" /></label>
-        <label class="check"><input id="show-orbital" type="checkbox" checked /> Orbital isosurface</label>
-        <label>Isovalue <input id="iso" type="range" min="0.01" max="0.2" step="0.005" value="0.05" /></label>
-        <button id="save-image">Save image</button>
+        <h2>Show</h2>
+        <label class="check" title="Where the electrons are: brighter means more electrons"><input id="show-cloud" type="checkbox" checked /> Electron cloud</label>
+        <label class="check" title="One orbital: blue where its wave is positive, orange where negative. Pick which one in Energy levels."><input id="show-orbital" type="checkbox" /> Orbital <span class="muted">(pick one on the right)</span></label>
+        <details id="display">
+          <summary>Display settings</summary>
+          <label>Cloud opacity <input id="cloud-opacity" type="range" min="0" max="1" step="0.01" value="0.4" /></label>
+          <label title="How thin the cloud gets before it is no longer drawn">Faintest density shown <input id="cloud-min" type="range" min="-5" max="-1" step="0.1" value="-2.5" /></label>
+          <label title="Lower values draw bigger, looser orbital surfaces">Orbital size (isovalue) <input id="iso" type="range" min="0.01" max="0.2" step="0.005" value="0.08" /></label>
+          <button id="save-image">Save image</button>
+        </details>
+      </section>
+
+      <section>
+        <details id="settings">
+          <summary>Calculation settings <span id="settings-summary" class="muted"></span></summary>
+          <p class="hint">For chemists. The defaults work for every molecule in the list.</p>
+          <div class="row">
+            <label
+              >Theory
+              <select id="method">
+                <option value="hf" title="Hartree–Fock (RHF, or UHF for open shells)">HF</option>
+                <option value="lda" title="Local density approximation (Slater + VWN5)">LDA</option>
+                <option value="pbe" title="PBE generalized-gradient functional">PBE</option>
+              </select>
+            </label>
+            <label
+              >Basis
+              <select id="basis">
+                <option value="sto-3g">STO-3G</option>
+                <option value="6-31g">6-31G</option>
+                <option value="6-31g*">6-31G*</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label>Charge <input id="charge" type="number" step="1" value="0" /></label>
+            <label title="Number of unpaired electrons plus one">Multiplicity <input id="multiplicity" type="number" min="1" step="1" value="1" /></label>
+          </div>
+          <details id="xyz-box">
+            <summary>Paste your own molecule (XYZ, Å)</summary>
+            <textarea id="xyz" rows="7" spellcheck="false" placeholder="O 0 0 0.117&#10;H 0 0.757 -0.469&#10;H 0 -0.757 -0.469"></textarea>
+            <button id="load-xyz">Load</button>
+          </details>
+        </details>
       </section>
     </aside>
 
     <aside id="results" class="panel">
-      <h2>Results</h2>
+      <h2>Energy</h2>
+      <div id="energy" class="energy">…</div>
+      <p class="hint">Lower is more stable. Drag an atom and watch it change.</p>
       <div id="status" class="status">Loading engine…</div>
-      <dl id="readouts"></dl>
-      <h2>Orbitals <span id="orbital-name" class="muted"></span></h2>
+
+      <h2>Energy levels <span id="orbital-name" class="muted"></span></h2>
+      <p class="hint">Each line holds up to two electrons (the arrows); higher lines are empty. Click a line to see that orbital.</p>
       <svg id="diagram" role="img" aria-label="Orbital energy levels"></svg>
-      <p class="hint">Click a level to show that orbital (blue = positive, orange = negative lobe).</p>
+
+      <details id="more-numbers">
+        <summary>More numbers</summary>
+        <dl id="readouts"></dl>
+      </details>
     </aside>
 
+    <div id="legend" class="panel" aria-label="What you are looking at">
+      <b id="legend-title"></b>
+      <div class="legend-item" id="legend-cloud" title="Where the electrons are. Faint haze at the edges, bright near the nuclei where electrons crowd together.">
+        <span class="swatch ramp"></span><span>Electron cloud <span class="muted">(brighter = more electrons)</span></span>
+      </div>
+      <div class="legend-item" id="legend-orbital" title="One orbital: the region where one pair of electrons lives. The colors show the sign of its wave; where they meet, those electrons are never found.">
+        <span><span id="legend-orbital-name">Orbital</span>:</span>
+        <span class="swatch lobe-pos"></span><span>+</span>
+        <span class="swatch lobe-neg"></span><span>−</span>
+      </div>
+      <div class="legend-item" id="legend-atoms" title="Atoms in the usual chemistry colors; sticks are bonds."></div>
+      <button id="legend-help" class="link">What does this mean?</button>
+    </div>
+
+    <div id="labels" aria-hidden="true"></div>
+
+    <div id="tip" class="panel" role="status" hidden>
+      <span id="tip-text"></span>
+      <button id="tip-close" class="link" title="Hide the tips">Hide tips</button>
+    </div>
+
+    <dialog id="intro" aria-labelledby="intro-title">
+      <form method="dialog">
+        <h1 id="intro-title">Quantum Molecules</h1>
+        <p class="lead">
+          You are looking at a real molecule, calculated from the laws of quantum mechanics right now, in your browser.
+        </p>
+
+        <ul class="key">
+          <li>
+            <span class="swatch ramp"></span>
+            <div><b>The glowing cloud is where the electrons are.</b> Brighter means more electrons.</div>
+          </li>
+          <li>
+            <span class="swatch pair"><span style="background: rgb(242, 242, 242)"></span><span style="background: rgb(97, 97, 97)"></span><span style="background: rgb(48, 79, 247)"></span><span style="background: rgb(255, 33, 33)"></span></span>
+            <div><b>The balls are atoms</b>, labelled with their element: H hydrogen, C carbon, N nitrogen, O oxygen.</div>
+          </li>
+          <li>
+            <span class="swatch pair"><span class="lobe-pos"></span><span class="lobe-neg"></span></span>
+            <div><b>Blue and orange shapes are orbitals</b>, where one pair of electrons lives. You will meet them in a moment.</div>
+          </li>
+        </ul>
+
+        <p>Tips at the bottom of the screen walk you through it: move an atom, let the molecule relax, look inside.</p>
+
+        <details id="intro-more">
+          <summary>How does it work?</summary>
+          <p>
+            Given where the atoms' nuclei are, the program solves for the electrons: where they go and how much energy the
+            molecule has. It uses Hartree–Fock and density functional theory, the same methods chemists run on
+            supercomputers for bigger molecules, and repeats the whole calculation every time you move an atom.
+          </p>
+          <p id="intro-colors">
+            <b>The cloud</b> is the electron density, all the electrons together. <b>An orbital</b> is the wave of one pair
+            of electrons. Waves have a sign: <span class="pos">blue</span> is positive and <span class="neg">orange</span>
+            is negative. Which is which is arbitrary, but where they meet is a node, where those electrons are never
+            found. The orbitals that hold electrons add up to the cloud.
+          </p>
+          <p>
+            <b>Energy levels</b> on the right list the orbitals from most to least tightly bound. HOMO is the highest one
+            holding electrons and LUMO the lowest empty one; chemistry mostly happens between the two. Energies are in
+            hartree (1 Ha = 27.2 eV, about 2600 kJ/mol). <b>Watch it solve</b> replays the calculation as it improves its
+            guess, step by step, from separate atoms to the finished molecule.
+          </p>
+          <p>
+            <b>Calculation settings</b> let chemists pick the method and basis set, set the charge and spin, or paste their
+            own molecule.
+          </p>
+        </details>
+
+        <div class="intro-actions">
+          <button id="restart-tips" class="link" type="button">Restart the tips</button>
+          <span class="muted">Reopen this with <b>? Help</b>, top left.</span>
+          <button id="intro-close" class="primary" value="close" autofocus>Let's go</button>
+        </div>
+      </form>
+    </dialog>
+
     <footer id="playback" class="panel">
-      <button id="play-scf" title="Replay the SCF from the starting guess">▶ Play SCF</button>
-      <input id="scf-frame" type="range" min="0" max="0" value="0" disabled />
-      <span id="scf-label" class="muted">SCF iterations</span>
+      <button id="play-scf" title="Replay the calculation step by step, from separate atoms to the finished molecule">▶ Watch it solve</button>
+      <input id="scf-frame" type="range" min="0" max="0" value="0" disabled aria-label="Calculation step" />
+      <span id="scf-label" class="muted">calculation steps</span>
     </footer>
 
     <script type="module" src="/src/main.ts"></script>

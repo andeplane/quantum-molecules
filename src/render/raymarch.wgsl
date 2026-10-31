@@ -48,11 +48,12 @@ fn sampleVol(p: vec3f) -> vec4f {
   return textureSampleLevel(volume, samp, toUvw(p), 0.0);
 }
 
-// A perceptual blue-to-white ramp for the cloud.
+// A muted violet-to-white ramp for the cloud, kept apart from the blue and orange orbital lobes.
+// Keep in sync with CLOUD_RAMP in src/ui/legend.ts.
 fn cloudColor(t: f32) -> vec3f {
-  let c0 = vec3f(0.10, 0.22, 0.55);
-  let c1 = vec3f(0.25, 0.65, 0.95);
-  let c2 = vec3f(0.95, 0.98, 1.00);
+  let c0 = vec3f(0.30, 0.28, 0.40);
+  let c1 = vec3f(0.66, 0.64, 0.78);
+  let c2 = vec3f(1.00, 0.98, 0.95);
   return select(mix(c1, c2, (t - 0.5) * 2.0), mix(c0, c1, t * 2.0), t < 0.5);
 }
 
@@ -114,6 +115,7 @@ fn fs(in: VsOut) -> @location(0) vec4f {
         if (dot(n, dir) > 0.0) {
           n = -n;
         }
+        // Keep in sync with LOBE_POSITIVE and LOBE_NEGATIVE in src/ui/legend.ts.
         let base = select(vec3f(0.95, 0.42, 0.18), vec3f(0.22, 0.52, 1.0), level > 0.0);
         let diff = max(dot(n, light), 0.0);
         let spec = pow(max(dot(n, normalize(light - dir)), 0.0), 40.0);

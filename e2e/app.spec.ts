@@ -25,6 +25,28 @@ async function open(page: Page, query = '') {
   return errors;
 }
 
+/** Drag an atom sideways on screen by `dx` pixels. */
+async function dragAtom(page: Page, index: number, dx = 40) {
+  const pos = await page.evaluate((index) => {
+    const m = window.__qm.camera.viewProjection;
+    const p = window.__qm.state.atoms[index].xyz;
+    const x = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12];
+    const y = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
+    const w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
+    const r = document.getElementById('view')!.getBoundingClientRect();
+    return { x: r.left + ((x / w + 1) / 2) * r.width, y: r.top + ((1 - y / w) / 2) * r.height };
+  }, index);
+  await page.mouse.move(pos.x, pos.y);
+  await page.mouse.down();
+  for (let k = 1; k <= 5; k++) await page.mouse.move(pos.x + (dx / 5) * k, pos.y);
+  await page.mouse.up();
+}
+
+/** The orbital-diagram line labelled HOMO or LUMO. */
+const level = (page: Page, label: string) => page.locator('#diagram .level').filter({ has: page.locator('text.label', { hasText: new RegExp(`^${label}$`) }) });
+
+const openSettings = (page: Page) => page.click('#settings summary');
+
 const result = (page: Page) => page.evaluate(() => window.__qm.state.result);
 const current = async (page: Page) => (await result(page))!;
 const energyText = (page: Page) => page.locator('#readouts dd').first().textContent();
@@ -54,7 +76,10 @@ test('computes water on load and draws it', async ({ page }) => {
   // RHF/6-31G water at the preset geometry.
   expect(res.converged).toBe(true);
   expect(res.energy).toBeCloseTo(-75.98397, 4);
-  await expect(page.locator('#status')).toContainText('-75.98397');
+  await expect(page.locator('#energy')).toHaveText('-75.98397 Ha');
+  await expect(page.locator('#status')).toContainText('Solved in');
+  // Element labels sit over the atoms.
+  await expect(page.locator('#labels span')).toHaveText(['O', 'H', 'H']);
   expect(await energyText(page)).toContain('-75.98397');
   expect(await page.locator('#diagram .level').count()).toBeGreaterThan(5);
   expect(await coverage(page)).toBeGreaterThan(0.05);
@@ -90,6 +115,7 @@ test('the GPU volume matches the CPU reference', async ({ page }) => {
 
 test('switching molecule, method and basis recomputes', async ({ page }) => {
   await open(page);
+  await openSettings(page);
   await page.selectOption('#preset', 'ch4');
   await expect.poll(async () => (await result(page))?.nbf).toBe(17);
   await page.selectOption('#method', 'pbe');
@@ -109,6 +135,7 @@ test('switching molecule, method and basis recomputes', async ({ page }) => {
 
 test('relaxes the geometry', async ({ page }) => {
   await open(page);
+  await openSettings(page);
   await page.selectOption('#basis', 'sto-3g');
   await expect.poll(async () => (await result(page))?.nbf).toBe(7);
   const before = (await current(page)).energy;
@@ -123,20 +150,7 @@ test('relaxes the geometry', async ({ page }) => {
 test('dragging an atom moves it and re-runs the SCF', async ({ page }) => {
   await open(page);
   const before = await current(page);
-  // Project the first hydrogen to the screen.
-  const pos = await page.evaluate(() => {
-    const m = window.__qm.camera.viewProjection;
-    const p = window.__qm.state.atoms[1].xyz;
-    const x = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12];
-    const y = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
-    const w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
-    const r = document.getElementById('view')!.getBoundingClientRect();
-    return { x: r.left + ((x / w + 1) / 2) * r.width, y: r.top + ((1 - y / w) / 2) * r.height };
-  });
-  await page.mouse.move(pos.x, pos.y);
-  await page.mouse.down();
-  for (let k = 1; k <= 5; k++) await page.mouse.move(pos.x + 8 * k, pos.y);
-  await page.mouse.up();
+  await dragAtom(page, 1);
   await expect.poll(async () => (await result(page))?.coordinates[3 * 1]).not.toBeCloseTo(before.coordinates[3], 3);
   const after = await current(page);
   expect(after.energy).not.toBeCloseTo(before.energy, 5);
@@ -147,12 +161,17 @@ test('dragging an atom moves it and re-runs the SCF', async ({ page }) => {
 
 test('selecting an orbital level and playing the SCF', async ({ page }) => {
   await open(page);
+  // The view starts on the cloud alone; clicking a level shows its orbital.
+  await expect(page.locator('#orbital-name')).toHaveText('');
+  await expect(page.locator('#show-orbital')).not.toBeChecked();
+  await level(page, 'HOMO').click();
   await expect(page.locator('#orbital-name')).toContainText('HOMO');
+  await expect(page.locator('#show-orbital')).toBeChecked();
   await page.locator('#diagram .level:not(.occupied)').first().click();
   await expect(page.locator('#orbital-name')).toContainText('LUMO');
   await page.click('#play-scf');
-  await expect(page.locator('#scf-label')).toContainText('iteration 1 of');
-  await expect(page.locator('#play-scf')).toHaveText('▶ Play SCF', { timeout: 20_000 });
+  await expect(page.locator('#scf-label')).toContainText('step 1 of');
+  await expect(page.locator('#play-scf')).toHaveText('▶ Watch it solve', { timeout: 20_000 });
   await page.locator('#scf-frame').fill('0');
   await expect.poll(() => page.evaluate(() => window.__qm.state.frame)).toBe(0);
   expect(await coverage(page)).toBeGreaterThan(0.05);
@@ -160,6 +179,7 @@ test('selecting an orbital level and playing the SCF', async ({ page }) => {
 
 test('loads pasted XYZ and reports errors', async ({ page }) => {
   await open(page);
+  await openSettings(page);
   await page.click('#xyz-box summary');
   await page.fill('#xyz', 'H 0 0 0\nF 0 0 0.92');
   await page.click('#load-xyz');
@@ -168,4 +188,71 @@ test('loads pasted XYZ and reports errors', async ({ page }) => {
   await page.fill('#xyz', 'Na 0 0 0');
   await page.click('#load-xyz');
   await expect(page.locator('#status')).toHaveClass(/error/);
+});
+
+test('explains itself on the first visit and on demand', async ({ page }) => {
+  await open(page, '&intro');
+  const intro = page.locator('#intro');
+  await expect(intro).toBeVisible();
+  await expect(intro).toContainText('where the electrons are');
+  await expect(page.locator('#tip')).toBeHidden();
+  await page.locator('#intro-close').click();
+  await expect(intro).toBeHidden();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('quantum-molecules:intro-seen'))).toBe('1');
+
+  // It can be reopened, and closed with Escape.
+  await page.locator('#help').click();
+  await expect(intro).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(intro).toBeHidden();
+  // "What does this mean?" in the legend opens the detailed part.
+  await page.locator('#legend-help').click();
+  await expect(page.locator('#intro-more')).toHaveAttribute('open', '');
+  await page.keyboard.press('Escape');
+
+  // The legend names what is on screen and follows the view.
+  await expect(page.locator('#legend-title')).toHaveText('Water H₂O');
+  await expect(page.locator('#legend-atoms')).toHaveText('OH');
+  await expect(page.locator('#legend-orbital')).toBeHidden();
+  await level(page, 'LUMO').click();
+  await expect(page.locator('#legend-orbital-name')).toHaveText('LUMO orbital');
+  await page.locator('#show-orbital').uncheck();
+  await expect(page.locator('#legend-orbital')).toBeHidden();
+  await page.selectOption('#preset', 'ch4');
+  await expect(page.locator('#legend-atoms')).toHaveText('CH');
+  await expect(page.locator('#preset-blurb')).toContainText('tetrahedron');
+});
+
+test('tips walk a newcomer through the page', async ({ page }) => {
+  await open(page, '&intro');
+  await page.locator('#intro-close').click();
+  const tip = page.locator('#tip-text');
+  await expect(tip).toContainText('drag one of the atoms');
+  await dragAtom(page, 1);
+  await expect(tip).toContainText('Relax geometry');
+  await page.click('#relax');
+  await expect(tip).toContainText('Energy levels', { timeout: 60_000 });
+  await level(page, 'HOMO').click();
+  await expect(tip).toContainText('another molecule');
+  await page.selectOption('#preset', 'nh3');
+  await expect(page.locator('#tip')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('quantum-molecules:tips-done'))).toBe('1');
+
+  // They can be restarted from the help dialog, and hidden.
+  await page.locator('#help').click();
+  await page.locator('#restart-tips').click();
+  await expect(page.locator('#intro')).toBeHidden();
+  await expect(tip).toContainText('drag one of the atoms');
+  await page.locator('#tip-close').click();
+  await expect(page.locator('#tip')).toBeHidden();
+});
+
+test('does not show the intro or tips to returning visitors', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('quantum-molecules:intro-seen', '1');
+    localStorage.setItem('quantum-molecules:tips-done', '1');
+  });
+  await open(page, '&intro');
+  await expect(page.locator('#intro')).toBeHidden();
+  await expect(page.locator('#tip')).toBeHidden();
 });
