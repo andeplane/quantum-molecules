@@ -8,6 +8,7 @@ import { add, dot, raySphere, scale, sub, type Vec3 } from './render/math';
 import { Renderer, type ViewSettings } from './render/renderer';
 import { volumeInputs, type OrbitalSelection } from './render/volume-data';
 import { readouts } from './ui/format';
+import { describeOrbital, legendElements } from './ui/legend';
 import { renderDiagram } from './ui/orbital-diagram';
 import { atomRadius, boundingSphere, buildScene } from './ui/scene';
 
@@ -39,6 +40,13 @@ const ui = {
   playScf: $<HTMLButtonElement>('play-scf'),
   scfFrame: $<HTMLInputElement>('scf-frame'),
   scfLabel: $('scf-label'),
+  help: $<HTMLButtonElement>('help'),
+  intro: $<HTMLDialogElement>('intro'),
+  legendCloud: $('legend-cloud'),
+  legendOrbital: $('legend-orbital'),
+  legendOrbitalName: $('legend-orbital-name'),
+  legendAtoms: $('legend-atoms'),
+  legendHelp: $<HTMLButtonElement>('legend-help'),
 };
 
 interface State {
@@ -190,8 +198,29 @@ function drawDiagram() {
   });
   if (state.orbital) {
     const level = orbitalLevels(res, state.orbital.spin)[state.orbital.index];
-    ui.orbitalName.textContent = `· ${level.label}${res.unrestricted ? (state.orbital.spin === 'alpha' ? ' α' : ' β') : ''}`;
+    const name = `${level.label}${res.unrestricted ? (state.orbital.spin === 'alpha' ? ' α' : ' β') : ''}`;
+    ui.orbitalName.textContent = `· ${name}`;
+    ui.legendOrbitalName.textContent = `${name} orbital`;
+    ui.legendOrbital.title = `${name}: ${describeOrbital(level.label)}. Blue where its wavefunction is positive, orange where it is negative; where they meet is a node, where this orbital's electrons are never found.`;
   }
+  updateLegend();
+}
+
+function updateLegend() {
+  ui.legendCloud.hidden = !ui.showCloud.checked;
+  ui.legendOrbital.hidden = !(ui.showOrbital.checked && state.orbital);
+  ui.legendAtoms.replaceChildren(
+    ...legendElements(state.atoms).map((e) => {
+      const item = document.createElement('span');
+      item.className = 'legend-item';
+      item.title = e.name;
+      const swatch = document.createElement('span');
+      swatch.className = 'swatch';
+      swatch.style.background = e.color;
+      item.append(swatch, e.symbol);
+      return item;
+    }),
+  );
 }
 
 function describe(res: ComputeOutput) {
@@ -229,6 +258,7 @@ function setMolecule(atoms: Atom[], charge: number, multiplicity: number) {
   const { center, radius } = boundingSphere(atoms);
   camera.fit(center, radius);
   updateScene();
+  updateLegend();
   recompute();
 }
 
@@ -452,9 +482,14 @@ ui.resetGeometry.addEventListener('click', () => {
   updateScene();
   recompute();
 });
-for (const el of [ui.showCloud, ui.cloudOpacity, ui.cloudMin, ui.iso]) el.addEventListener('input', () => (needsRender = true));
+for (const el of [ui.cloudOpacity, ui.cloudMin, ui.iso]) el.addEventListener('input', () => (needsRender = true));
+ui.showCloud.addEventListener('input', () => {
+  updateLegend();
+  needsRender = true;
+});
 ui.showOrbital.addEventListener('input', () => {
   if (ui.showOrbital.checked && !state.orbital && state.result) state.orbital = defaultOrbital(state.result);
+  updateLegend();
   needsRender = true;
 });
 ui.playScf.addEventListener('click', playScf);
@@ -470,9 +505,43 @@ ui.scfFrame.addEventListener('input', () => {
   showFrame(Number(ui.scfFrame.value));
 });
 
+// ---- intro ------------------------------------------------------------------------------------
+
+const INTRO_SEEN = 'quantum-molecules:intro-seen';
+
+function showIntro(section?: string) {
+  if (!ui.intro.open) ui.intro.showModal();
+  if (section) document.getElementById(section)?.scrollIntoView({ block: 'start' });
+  else ui.intro.scrollTop = 0;
+}
+
+ui.help.addEventListener('click', () => showIntro());
+ui.legendHelp.addEventListener('click', () => showIntro('intro-colors'));
+ui.intro.addEventListener('close', () => {
+  try {
+    localStorage.setItem(INTRO_SEEN, '1');
+  } catch {
+    // Storage can be blocked; the intro then just shows again next time.
+  }
+});
+// A click on the backdrop lands on the dialog element itself.
+ui.intro.addEventListener('click', (ev) => {
+  if (ev.target === ui.intro) ui.intro.close();
+});
+
+function introSeen(): boolean {
+  try {
+    return localStorage.getItem(INTRO_SEEN) !== null;
+  } catch {
+    return false;
+  }
+}
+
 // ---- start ------------------------------------------------------------------------------------
 
 async function start() {
+  // Tests run with ?headless, which skips the intro unless ?intro is also given.
+  if ((!headless || new URLSearchParams(location.search).has('intro')) && !introSeen()) showIntro();
   ui.method.value = state.method;
   ui.basis.value = state.basis;
   try {

@@ -169,3 +169,35 @@ test('loads pasted XYZ and reports errors', async ({ page }) => {
   await page.click('#load-xyz');
   await expect(page.locator('#status')).toHaveClass(/error/);
 });
+
+test('explains itself on the first visit and on demand', async ({ page }) => {
+  await open(page, '&intro');
+  const intro = page.locator('#intro');
+  await expect(intro).toBeVisible();
+  await expect(intro).toContainText('electron density');
+  await expect(intro).toContainText('blue is positive');
+  await page.locator('#intro-close').click();
+  await expect(intro).toBeHidden();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('quantum-molecules:intro-seen'))).toBe('1');
+
+  await page.locator('#help').click();
+  await expect(intro).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(intro).toBeHidden();
+
+  // The legend names what is on screen and follows the view settings.
+  await expect(page.locator('#legend-orbital-name')).toHaveText('HOMO orbital');
+  await expect(page.locator('#legend-atoms')).toHaveText('OH');
+  await page.locator('#diagram .level', { hasText: 'LUMO' }).first().click();
+  await expect(page.locator('#legend-orbital-name')).toHaveText('LUMO orbital');
+  await page.locator('#show-orbital').uncheck();
+  await expect(page.locator('#legend-orbital')).toBeHidden();
+  await page.selectOption('#preset', 'ch4');
+  await expect(page.locator('#legend-atoms')).toHaveText('CH');
+});
+
+test('does not show the intro to returning visitors', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('quantum-molecules:intro-seen', '1'));
+  await open(page, '&intro');
+  await expect(page.locator('#intro')).toBeHidden();
+});

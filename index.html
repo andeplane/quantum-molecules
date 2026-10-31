@@ -13,8 +13,13 @@
     <div id="no-gpu" class="banner" hidden></div>
 
     <aside id="controls" class="panel">
-      <h1>Quantum Molecules</h1>
-      <p class="sub">Hartree–Fock and DFT in your browser</p>
+      <header class="title">
+        <div>
+          <h1>Quantum Molecules</h1>
+          <p class="sub">Hartree–Fock and DFT in your browser</p>
+        </div>
+        <button id="help" class="icon" title="What am I looking at?" aria-label="About this page and what the colors mean">?</button>
+      </header>
 
       <section>
         <h2>Molecule</h2>
@@ -59,11 +64,11 @@
 
       <section>
         <h2>View</h2>
-        <label class="check"><input id="show-cloud" type="checkbox" checked /> Electron density cloud</label>
+        <label class="check" title="Where the electrons are: brighter means more electrons"><input id="show-cloud" type="checkbox" checked /> Electron density cloud</label>
         <label>Cloud opacity <input id="cloud-opacity" type="range" min="0" max="1" step="0.01" value="0.4" /></label>
         <label>Faintest density shown <input id="cloud-min" type="range" min="-5" max="-1" step="0.1" value="-2.5" /></label>
-        <label class="check"><input id="show-orbital" type="checkbox" checked /> Orbital isosurface</label>
-        <label>Isovalue <input id="iso" type="range" min="0.01" max="0.2" step="0.005" value="0.05" /></label>
+        <label class="check" title="One molecular orbital: blue where its wavefunction is positive, orange where negative"><input id="show-orbital" type="checkbox" checked /> Orbital isosurface</label>
+        <label title="Lower values draw bigger, looser orbital surfaces">Isovalue <input id="iso" type="range" min="0.01" max="0.2" step="0.005" value="0.08" /></label>
         <button id="save-image">Save image</button>
       </section>
     </aside>
@@ -74,8 +79,81 @@
       <dl id="readouts"></dl>
       <h2>Orbitals <span id="orbital-name" class="muted"></span></h2>
       <svg id="diagram" role="img" aria-label="Orbital energy levels"></svg>
-      <p class="hint">Click a level to show that orbital (blue = positive, orange = negative lobe).</p>
+      <p class="hint">Each line is an orbital; lower lines hold electrons more tightly. Arrows are electrons (spin up and down), and lines without arrows are empty. Click a line to draw that orbital.</p>
     </aside>
+
+    <div id="legend" class="panel" aria-label="Color legend">
+      <div class="legend-item" id="legend-cloud" title="Where the electrons are. Faint haze at the edges, bright near the nuclei where electrons crowd together.">
+        <span class="swatch ramp"></span><span>Electron density <span class="muted">(brighter = more electrons)</span></span>
+      </div>
+      <div class="legend-item" id="legend-orbital" title="One molecular orbital, drawn where its wavefunction reaches the isovalue. The colors show its sign; where they meet is a node, where this orbital's electrons are never found.">
+        <span><span id="legend-orbital-name">Orbital</span>:</span>
+        <span class="swatch lobe-pos"></span><span>+</span>
+        <span class="swatch lobe-neg"></span><span>−</span>
+      </div>
+      <div class="legend-item" id="legend-atoms" title="Nuclei in the usual chemistry colors; sticks are bonds."></div>
+      <button id="legend-help" class="link">What do these mean?</button>
+    </div>
+
+    <dialog id="intro" aria-labelledby="intro-title">
+      <form method="dialog">
+        <h1 id="intro-title">Quantum Molecules</h1>
+        <p class="lead">
+          This page solves the quantum mechanics of a small molecule, live in your browser. Given where the nuclei are, it
+          works out where the electrons go and what the molecule's energy is, using Hartree–Fock and density functional
+          theory, the same methods chemists run on supercomputers for bigger molecules.
+        </p>
+
+        <h2 id="intro-colors">What the colors mean</h2>
+        <ul class="key">
+          <li>
+            <span class="swatch ramp"></span>
+            <div>
+              <b>The glowing cloud is the electron density</b>, how likely you are to find an electron at each point. It is
+              all the molecule's electrons together: a faint haze at the edges, bright and white near the nuclei where they
+              crowd together.
+            </div>
+          </li>
+          <li>
+            <span class="swatch pair"><span class="lobe-pos"></span><span class="lobe-neg"></span></span>
+            <div>
+              <b>The blue and orange surfaces are one molecular orbital</b>, the shape of a single pair of electrons. Each
+              orbital is a wave that is positive in some places and negative in others: <span class="pos">blue</span> is
+              positive and <span class="neg">orange</span> is negative. Which one is which is arbitrary, but where they meet
+              is a node, a surface where that orbital's electrons are never found. You start on the HOMO, the
+              highest-energy orbital that holds electrons, which is where chemistry happens.
+            </div>
+          </li>
+          <li>
+            <span class="swatch pair"><span style="background: rgb(242, 242, 242)"></span><span style="background: rgb(97, 97, 97)"></span><span style="background: rgb(48, 79, 247)"></span><span style="background: rgb(255, 33, 33)"></span></span>
+            <div>
+              <b>The balls are the atoms' nuclei</b> in the usual chemistry colors (hydrogen white, carbon gray, nitrogen
+              blue, oxygen red, fluorine green) and the sticks are bonds. The legend at the top names the ones on screen.
+            </div>
+          </li>
+        </ul>
+
+        <h2>Things to try</h2>
+        <ul>
+          <li><b>Drag an atom.</b> The calculation re-runs as you move it, so you can watch the energy rise and the cloud stretch.</li>
+          <li><b>Relax geometry</b> lets the atoms slide downhill in energy to the molecule's natural shape.</li>
+          <li><b>Click a line in the orbital diagram</b> on the right to draw that orbital. Lines with arrows hold electrons; empty lines are where an extra electron would go.</li>
+          <li><b>Play SCF</b> replays the calculation from separate atoms to the finished molecule.</li>
+          <li>Drag empty space to rotate and scroll to zoom. Pick other molecules, methods and basis sets on the left.</li>
+        </ul>
+
+        <h2>Reading the numbers</h2>
+        <p>
+          Energies are in hartree (1 Ha = 27.2 eV, about 2600 kJ/mol). The HOMO–LUMO gap is roughly the energy it takes
+          to excite the molecule, and the dipole moment, in debye, measures how unevenly the charge is spread.
+        </p>
+
+        <div class="intro-actions">
+          <span class="muted">Reopen this any time with the ? button.</span>
+          <button id="intro-close" class="primary" value="close" autofocus>Start exploring</button>
+        </div>
+      </form>
+    </dialog>
 
     <footer id="playback" class="panel">
       <button id="play-scf" title="Replay the SCF from the starting guess">▶ Play SCF</button>
