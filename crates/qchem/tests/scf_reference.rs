@@ -86,9 +86,29 @@ reference_test!(
 );
 reference_test!(pbe_nitrogen_631g, "n2", "6-31g", "rks", Some("pbe"));
 reference_test!(lda_methane_sto3g, "ch4", "sto-3g", "rks", Some("lda,vwn"));
+// Third row, for the crystal clusters.
+reference_test!(rhf_sodium_chloride_sto3g, "nacl", "sto-3g", "rhf", None);
+reference_test!(rhf_sodium_chloride_631gs, "nacl", "6-31g*", "rhf", None);
+reference_test!(rhf_silane_631gs, "sih4", "6-31g*", "rhf", None);
+reference_test!(rhf_hydrogen_sulfide_631g, "h2s", "6-31g", "rhf", None);
+reference_test!(rhf_magnesium_oxide_sto3g, "mgo", "sto-3g", "rhf", None);
+reference_test!(
+    pbe_hydrogen_chloride_631g,
+    "hcl",
+    "6-31g",
+    "rks",
+    Some("pbe")
+);
+reference_test!(
+    lda_sodium_chloride_631g,
+    "nacl",
+    "6-31g",
+    "rks",
+    Some("lda,vwn")
+);
 
 #[test]
 fn every_fixture_has_a_test() {
     // Guard against fixtures being added without a matching test above.
-    assert_eq!(cases().len(), 13);
+    assert_eq!(cases().len(), 20);
 }

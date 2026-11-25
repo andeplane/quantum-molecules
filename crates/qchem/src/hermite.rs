@@ -146,6 +146,19 @@ impl HermiteR {
         self.l = l;
         boys(l, alpha * (x * x + y * y + z * z), &mut self.fbuf);
         let m2a = -2.0 * alpha;
+        // The common low orders written out (layout (t * 2 + u) * 2 + v for l = 1).
+        if l == 0 {
+            self.out[0] = self.fbuf[0];
+            return;
+        }
+        if l == 1 {
+            let r1 = m2a * self.fbuf[1];
+            self.out[0] = self.fbuf[0];
+            self.out[1] = z * r1;
+            self.out[2] = y * r1;
+            self.out[4] = x * r1;
+            return;
+        }
         let mut pw = m2a.powi(l as i32);
         let (mut prev, mut cur) = (0usize, cube);
         let s1 = l1 * l1;

@@ -8,6 +8,16 @@ use crate::scf::{Method, ScfResult};
 
 /// dE/dR in Hartree/bohr, flattened as [x0, y0, z0, x1, ...].
 pub fn scf_gradient(mol: &Molecule, res: &ScfResult) -> Vec<f64> {
+    scf_gradient_with(mol, res, None)
+}
+
+/// `scf_gradient` with the two-electron part already computed (for example by several workers
+/// with `eri::eri_gradient_part`).
+pub fn scf_gradient_with(
+    mol: &Molecule,
+    res: &ScfResult,
+    two_electron: Option<&[f64]>,
+) -> Vec<f64> {
     let n = res.nbf;
     let nmo = res.nmo;
     let natom = mol.atoms.len();
@@ -31,7 +41,10 @@ pub fn scf_gradient(mol: &Molecule, res: &ScfResult) -> Vec<f64> {
     let kx = res.method.exact_exchange();
     let mut grad = mol.nuclear_repulsion_gradient();
     let g1 = one_electron_gradient(&res.basis, &mol.atoms, &dt, &w);
-    let g2 = eri_gradient(&res.basis, natom, &dt, &res.da, &res.db, kx);
+    let g2 = match two_electron {
+        Some(g) => g.to_vec(),
+        None => eri_gradient(&res.basis, natom, &dt, &res.da, &res.db, kx),
+    };
     for i in 0..grad.len() {
         grad[i] += g1[i] + g2[i];
     }

@@ -185,7 +185,7 @@ test('loads pasted XYZ and reports errors', async ({ page }) => {
   await page.click('#load-xyz');
   await expect.poll(async () => (await result(page))?.nbf).toBe(11);
   await expect(page.locator('#preset')).toHaveValue('custom');
-  await page.fill('#xyz', 'Na 0 0 0');
+  await page.fill('#xyz', 'K 0 0 0');
   await page.click('#load-xyz');
   await expect(page.locator('#status')).toHaveClass(/error/);
 });
@@ -255,4 +255,34 @@ test('does not show the intro or tips to returning visitors', async ({ page }) =
   await open(page, '&intro');
   await expect(page.locator('#intro')).toBeHidden();
   await expect(page.locator('#tip')).toBeHidden();
+});
+
+test('shows a piece of a crystal, computed on several workers, inside the lattice drawn around it', async ({ page }) => {
+  const errors = await open(page);
+  await expect(page.locator('#crystal-box')).toBeHidden();
+  await page.selectOption('#preset', 'nacl');
+  await page.waitForFunction(() => window.__qm.state.result?.coordinates.length === 24, null, { timeout: 120_000 });
+  // PySCF RHF/STO-3G for the same Na4Cl4 cube.
+  expect((await current(page)).energy).toBeCloseTo(-2458.3338831, 5);
+  await expect(page.locator('#status')).toContainText('CPU threads');
+  await expect(page.locator('#crystal-box')).toBeVisible();
+  await expect(page.locator('#crystal-note')).toContainText('8 bright atoms');
+  await expect(page.locator('#crystal-note')).toContainText('not calculated');
+  await expect(page.locator('#legend-crystal')).toBeVisible();
+  await expect(page.locator('#crystal-repeats-label')).toHaveText('1 × 1 × 1');
+  // The cube of 27 ions in one cell, less the 8 computed ones, drawn see-through.
+  const ghosts = () => page.evaluate(() => (window.__qm.renderer as unknown as { ghostSphereCount: number }).ghostSphereCount);
+  expect(await ghosts()).toBe(19);
+  expect(await coverage(page)).toBeGreaterThan(0.02);
+  await page.fill('#crystal-repeats', '2');
+  await page.dispatchEvent('#crystal-repeats', 'input');
+  await expect(page.locator('#crystal-repeats-label')).toHaveText('2 × 2 × 2');
+  expect(await ghosts()).toBe(125 - 8);
+  await page.uncheck('#show-crystal');
+  await expect(page.locator('#legend-crystal')).toBeHidden();
+  expect(await ghosts()).toBe(0);
+  // Back to a molecule: the crystal controls go away.
+  await page.selectOption('#preset', 'h2o');
+  await expect(page.locator('#crystal-box')).toBeHidden();
+  expect(errors).toEqual([]);
 });

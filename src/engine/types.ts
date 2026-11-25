@@ -65,7 +65,8 @@ export type WorkerRequest =
   | { id: number; type: 'compute'; input: ComputeInput }
   | { id: number; type: 'relax'; input: ComputeInput; maxSteps?: number }
   | { id: number; type: 'cancel' }
-  | { id: number; type: 'reset' };
+  | { id: number; type: 'reset' }
+  | { id: number; type: 'configure'; threads: number };
 
 export type WorkerResponse =
   | { id: number; type: 'ready' }

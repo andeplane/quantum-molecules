@@ -92,4 +92,9 @@ export class EngineClient {
   reset() {
     this.send({ id: this.nextId++, type: 'reset' });
   }
+
+  /** How many workers share the two-electron integrals; send before the first calculation. */
+  configure(threads: number) {
+    this.send({ id: this.nextId++, type: 'configure', threads });
+  }
 }

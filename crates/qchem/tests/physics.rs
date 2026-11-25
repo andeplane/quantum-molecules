@@ -179,7 +179,7 @@ fn invalid_requests_are_rejected() {
     radical.multiplicity = 2;
     assert!(run_scf(&radical, &opts(BasisName::Sto3g, "pbe"), None).is_err());
     assert!(run_scf(&radical, &o, None).unwrap().unrestricted);
-    assert!(Atom::new("Cl", [0.0; 3]).is_err());
+    assert!(Atom::new("K", [0.0; 3]).is_err());
     assert!(BasisName::parse("cc-pvdz").is_err());
     assert!(Method::parse("b3lyp").is_err());
     assert!(run_scf(&Molecule::new(vec![], 0, 1), &o, None).is_err());

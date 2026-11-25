@@ -7,6 +7,16 @@ struct Camera {
 
 @group(0) @binding(0) var<uniform> cam: Camera;
 
+// Ghosts: the crystal around a computed cluster, drawn matte and see-through (premultiplied
+// alpha, no depth writes) so the calculated atoms and their cloud stay visible behind them.
+const GHOST_ALPHA = 0.5;
+
+fn ghostShade(n: vec3f, base: vec3f) -> vec3f {
+  let pale = mix(base, vec3f(0.8, 0.83, 0.92), 0.4);
+  let diff = max(dot(n, normalize(vec3f(0.4, 0.6, 1.0))), 0.0);
+  return pale * (0.3 + 0.6 * diff);
+}
+
 struct Sphere {
   @location(0) center: vec3f,
   @location(1) radius: f32,
@@ -117,4 +127,31 @@ fn bondVs(@location(5) ring: vec3f, bond: Bond) -> BondOut {
 fn bondFs(in: BondOut) -> @location(0) vec4f {
   let base = select(in.colorB, in.colorA, in.along < 0.5);
   return vec4f(shade(normalize(in.normal), normalize(-in.viewPos), base * 0.9), 1.0);
+}
+
+@fragment
+fn sphereGhostFs(in: SphereOut) -> FragOut {
+  let dir = normalize(in.viewPos);
+  let b = dot(dir, in.center);
+  let disc = b * b - dot(in.center, in.center) + in.radius * in.radius;
+  if (disc < 0.0) {
+    discard;
+  }
+  let t = b - sqrt(disc);
+  let hit = dir * t;
+  let n = normalize(hit - in.center);
+  let clip = cam.proj * vec4f(hit, 1.0);
+  // Softer towards the rim, like a glass bead.
+  let a = GHOST_ALPHA * (0.55 + 0.45 * max(dot(n, -dir), 0.0));
+  var o: FragOut;
+  o.color = vec4f(ghostShade(n, in.color) * a, a);
+  o.depth = clip.z / clip.w;
+  return o;
+}
+
+@fragment
+fn bondGhostFs(in: BondOut) -> @location(0) vec4f {
+  let base = select(in.colorB, in.colorA, in.along < 0.5);
+  let a = GHOST_ALPHA * 0.8;
+  return vec4f(ghostShade(normalize(in.normal), base) * a, a);
 }
