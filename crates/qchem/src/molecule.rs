@@ -13,7 +13,7 @@ pub struct Atom {
 impl Atom {
     pub fn new(symbol: &str, xyz: [f64; 3]) -> Result<Self, Error> {
         let e = element(symbol)
-            .ok_or_else(|| Error::new(format!("Unsupported element: {symbol} (H to Ne only)")))?;
+            .ok_or_else(|| Error::new(format!("Unsupported element: {symbol} (H to Ar only)")))?;
         Ok(Atom { z: e.z, xyz })
     }
 

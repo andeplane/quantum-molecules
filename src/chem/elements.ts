@@ -24,6 +24,14 @@ const RAW: [string, number, number, [number, number, number]][] = [
   ['O', 15.999, 0.66, [1.0, 0.13, 0.13]],
   ['F', 18.998, 0.57, [0.56, 0.88, 0.31]],
   ['Ne', 20.18, 0.58, [0.7, 0.89, 0.96]],
+  ['Na', 22.99, 1.66, [0.67, 0.36, 0.95]],
+  ['Mg', 24.305, 1.41, [0.54, 1.0, 0.0]],
+  ['Al', 26.982, 1.21, [0.75, 0.65, 0.65]],
+  ['Si', 28.085, 1.11, [0.94, 0.78, 0.63]],
+  ['P', 30.974, 1.07, [1.0, 0.5, 0.0]],
+  ['S', 32.06, 1.05, [1.0, 0.9, 0.19]],
+  ['Cl', 35.45, 1.02, [0.12, 0.94, 0.12]],
+  ['Ar', 39.948, 1.06, [0.5, 0.82, 0.89]],
 ];
 
 export const ELEMENTS: ElementInfo[] = RAW.map(([symbol, mass, covalentRadius, color], i) => ({
@@ -38,6 +46,6 @@ const BY_SYMBOL = new Map(ELEMENTS.map((e) => [e.symbol.toLowerCase(), e]));
 
 export function element(symbol: string): ElementInfo {
   const e = BY_SYMBOL.get(symbol.toLowerCase());
-  if (!e) throw new Error(`Unsupported element: ${symbol} (only H to Ne are available)`);
+  if (!e) throw new Error(`Unsupported element: ${symbol} (only H to Ar are available)`);
   return e;
 }

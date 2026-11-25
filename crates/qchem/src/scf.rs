@@ -374,6 +374,17 @@ pub fn run_scf(
     opts: &ScfOptions,
     guess: Option<&OrbitalGuess>,
 ) -> Result<ScfResult, Error> {
+    run_scf_with_eris(mol, opts, guess, None)
+}
+
+/// `run_scf` with the two-electron integrals already computed (for example by several workers
+/// with `eri::compute_eri_part`). They must belong to this molecule and basis set.
+pub fn run_scf_with_eris(
+    mol: &Molecule,
+    opts: &ScfOptions,
+    guess: Option<&OrbitalGuess>,
+    eris: Option<&EriTensor>,
+) -> Result<ScfResult, Error> {
     let nelec = mol.electron_count();
     let mult = mol.multiplicity as i64;
     if mol.atoms.is_empty() {
@@ -406,7 +417,19 @@ pub fn run_scf(
     let one = one_electron_matrices(&basis, &mol.atoms);
     let h: Vec<f64> = one.t.iter().zip(&one.v).map(|(t, v)| t + v).collect();
     let s = one.s;
-    let eri: EriTensor = compute_eris(&basis);
+    let owned;
+    let eri: &EriTensor = match eris {
+        Some(e) if e.n == n => e,
+        Some(_) => {
+            return Err(Error::new(
+                "The precomputed integrals belong to another basis.",
+            ))
+        }
+        None => {
+            owned = compute_eris(&basis);
+            &owned
+        }
+    };
     let grid = xc.map(|_| molecular_grid(&mol.atoms, opts.grid));
     let enuc = mol.nuclear_repulsion();
 
@@ -440,7 +463,7 @@ pub fn run_scf(
         } else {
             vec![da]
         };
-        let (j, k) = build_jk(&eri, &dt, &kd);
+        let (j, k) = build_jk(eri, &dt, &kd);
         let (vxc, exc) = match (xc, &grid) {
             (Some(f), Some(g)) => {
                 let r = xc_matrix(&basis, g, &dt, f);

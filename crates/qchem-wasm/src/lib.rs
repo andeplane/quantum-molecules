@@ -4,10 +4,12 @@
 //! `Session` keeps the last converged orbitals so nearby geometries start from them.
 
 use qchem::basis::cartesian_components;
+use qchem::eri::{compute_eri_part, eri_gradient_part, EriTensor};
 use qchem::molecule::Molecule;
 use qchem::optimize::{force_stats, Bfgs, OptStatus, OptimizerOptions};
 use qchem::{
-    run_scf, scf_gradient, Atom, BasisName, GridLevel, Method, OrbitalGuess, ScfOptions, ScfResult,
+    run_scf_with_eris, scf_gradient, scf_gradient_with, Atom, Basis, BasisName, GridLevel, Method,
+    OrbitalGuess, ScfOptions, ScfResult,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -142,10 +144,19 @@ fn now() -> f64 {
     js_sys::Date::now()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GradientOutput {
+    gradient: Vec<f64>,
+    max_force: f64,
+}
+
 /// Holds the previous result so the next geometry can start from its orbitals.
 #[wasm_bindgen]
 pub struct Session {
     guess: Option<OrbitalGuess>,
+    /// The last calculation, for `densities` and `gradient`.
+    last: Option<(Molecule, ScfResult)>,
 }
 
 impl Default for Session {
@@ -158,20 +169,91 @@ impl Default for Session {
 impl Session {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Session {
-        Session { guess: None }
+        Session {
+            guess: None,
+            last: None,
+        }
     }
 
     /// Forget the stored orbitals (for example after switching molecules).
     pub fn reset(&mut self) {
         self.guess = None;
+        self.last = None;
     }
 
-    /// Run an SCF calculation. See `ComputeInput` for the fields of `input`.
-    pub fn compute(&mut self, input: JsValue) -> Result<JsValue, JsError> {
+    /// Alpha and beta density matrices of the last calculation, `{ da, db }`, for
+    /// `eriGradientPart` in other workers.
+    pub fn densities(&self) -> Result<JsValue, JsError> {
+        let (_, res) = self
+            .last
+            .as_ref()
+            .ok_or_else(|| JsError::new("nothing computed yet"))?;
+        let out = js_sys::Object::new();
+        let set = |k: &str, v: &[f64]| {
+            js_sys::Reflect::set(
+                &out,
+                &JsValue::from_str(k),
+                &js_sys::Float64Array::from(v).into(),
+            )
+        };
+        set("da", &res.da)
+            .and_then(|_| set("db", &res.db))
+            .map_err(|_| JsError::new("could not build the densities"))?;
+        Ok(out.into())
+    }
+
+    /// Nuclear gradient of the last calculation (bohr), given its two-electron part summed from
+    /// `eriGradientPart`. Returns `{ gradient, maxForce }`.
+    pub fn gradient(&self, two_electron: Vec<f64>) -> Result<JsValue, JsError> {
+        let (mol, res) = self
+            .last
+            .as_ref()
+            .ok_or_else(|| JsError::new("nothing computed yet"))?;
+        if two_electron.len() != 3 * mol.atoms.len() {
+            return Err(JsError::new("gradient part has the wrong length"));
+        }
+        let g = scf_gradient_with(mol, res, Some(&two_electron));
+        let out = GradientOutput {
+            max_force: force_stats(&g).0,
+            gradient: g,
+        };
+        Ok(serde_wasm_bindgen::to_value(&out)?)
+    }
+
+    /// Run an SCF calculation. See `ComputeInput` for the fields of `input`. `eri_parts`, when
+    /// given, holds every stripe of the two-electron integrals from `eriPart` (computed by other
+    /// workers) as `{ index: Uint32Array, value: Float64Array }` objects.
+    pub fn compute(
+        &mut self,
+        input: JsValue,
+        eri_parts: Option<js_sys::Array>,
+    ) -> Result<JsValue, JsError> {
         let t0 = now();
         let input: ComputeInput = serde_wasm_bindgen::from_value(input)?;
         let mol = molecule_from(&input)?;
         let basis = BasisName::parse(&input.basis).map_err(|e| JsError::new(&e.0))?;
+        let eris = match eri_parts {
+            Some(parts) => {
+                let nbf = Basis::new(&mol.atoms, basis)
+                    .map_err(|e| JsError::new(&e.0))?
+                    .nbf;
+                let mut eri = EriTensor::new(nbf);
+                for part in parts.iter() {
+                    let get = |key: &str| js_sys::Reflect::get(&part, &JsValue::from_str(key));
+                    let index = js_sys::Uint32Array::from(
+                        get("index").map_err(|_| JsError::new("bad ERI part"))?,
+                    )
+                    .to_vec();
+                    let value = js_sys::Float64Array::from(
+                        get("value").map_err(|_| JsError::new("bad ERI part"))?,
+                    )
+                    .to_vec();
+                    eri.add_part(&index, &value);
+                }
+                Some(eri)
+            }
+            None => None,
+        };
         let method = Method::parse(&input.method).map_err(|e| JsError::new(&e.0))?;
         let mut opts = ScfOptions::new(basis, method);
         opts.record_history = input.history;
@@ -183,10 +265,12 @@ impl Session {
         } else {
             None
         };
-        let mut res = run_scf(&mol, &opts, guess).map_err(|e| JsError::new(&e.0))?;
+        let mut res =
+            run_scf_with_eris(&mol, &opts, guess, eris.as_ref()).map_err(|e| JsError::new(&e.0))?;
         if !res.converged && guess.is_some() {
             // A stale guess can trap the SCF; retry from atomic densities.
-            res = run_scf(&mol, &opts, None).map_err(|e| JsError::new(&e.0))?;
+            res = run_scf_with_eris(&mol, &opts, None, eris.as_ref())
+                .map_err(|e| JsError::new(&e.0))?;
         }
         if res.converged {
             self.guess = Some(res.guess());
@@ -228,6 +312,7 @@ impl Session {
             coordinates: mol.coordinates(),
             millis: now() - t0,
         };
+        self.last = Some((mol, res));
         Ok(serde_wasm_bindgen::to_value(&out)?)
     }
 }
@@ -260,6 +345,56 @@ impl Optimizer {
     pub fn steps(&self) -> usize {
         self.inner.steps
     }
+}
+
+/// One stripe of the two-electron integrals (every `stride`-th shell-pair row from `part`), so
+/// several workers can share the most expensive step. Returns `{ index, value }` typed arrays
+/// for `Session.compute`.
+#[wasm_bindgen(js_name = eriPart)]
+pub fn eri_part(input: JsValue, part: usize, stride: usize) -> Result<JsValue, JsError> {
+    let input: ComputeInput = serde_wasm_bindgen::from_value(input)?;
+    let mol = molecule_from(&input)?;
+    let name = BasisName::parse(&input.basis).map_err(|e| JsError::new(&e.0))?;
+    let basis = Basis::new(&mol.atoms, name).map_err(|e| JsError::new(&e.0))?;
+    let (index, value) = compute_eri_part(&basis, part, stride);
+    let out = js_sys::Object::new();
+    let set = |k: &str, v: &JsValue| js_sys::Reflect::set(&out, &JsValue::from_str(k), v);
+    set("index", &js_sys::Uint32Array::from(&index[..]).into())
+        .and_then(|_| set("value", &js_sys::Float64Array::from(&value[..]).into()))
+        .map_err(|_| JsError::new("could not build the ERI part"))?;
+    Ok(out.into())
+}
+
+/// One share of the two-electron part of the nuclear gradient (every `stride`-th shell-pair row
+/// from `part`) for the densities from `Session.densities`. The shares add up to the full part.
+#[wasm_bindgen(js_name = eriGradientPart)]
+pub fn eri_gradient_part_js(
+    input: JsValue,
+    da: Vec<f64>,
+    db: Vec<f64>,
+    part: usize,
+    stride: usize,
+) -> Result<Vec<f64>, JsError> {
+    let input: ComputeInput = serde_wasm_bindgen::from_value(input)?;
+    let mol = molecule_from(&input)?;
+    let name = BasisName::parse(&input.basis).map_err(|e| JsError::new(&e.0))?;
+    let method = Method::parse(&input.method).map_err(|e| JsError::new(&e.0))?;
+    let basis = Basis::new(&mol.atoms, name).map_err(|e| JsError::new(&e.0))?;
+    let n = basis.nbf;
+    if da.len() != n * n || db.len() != n * n {
+        return Err(JsError::new("densities do not match the basis"));
+    }
+    let dt: Vec<f64> = da.iter().zip(&db).map(|(a, b)| a + b).collect();
+    Ok(eri_gradient_part(
+        &basis,
+        mol.atoms.len(),
+        &dt,
+        &da,
+        &db,
+        method.exact_exchange(),
+        part,
+        stride,
+    ))
 }
 
 /// Which elements a basis set covers, for the UI.

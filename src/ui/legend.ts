@@ -12,6 +12,14 @@ const NAMES: Record<string, string> = {
   O: 'oxygen',
   F: 'fluorine',
   Ne: 'neon',
+  Na: 'sodium',
+  Mg: 'magnesium',
+  Al: 'aluminium',
+  Si: 'silicon',
+  P: 'phosphorus',
+  S: 'sulfur',
+  Cl: 'chlorine',
+  Ar: 'argon',
 };
 
 /** Orbital lobe colours; keep in sync with `raymarch.wgsl`. */

@@ -13,7 +13,7 @@ from pyscf import gto, scf, dft
 from pyscf.dft import gen_grid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ELEMENTS = ['H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne']
+ELEMENTS = ['H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne', 'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar']
 BASES = {'sto-3g': 'STO-3G', '6-31g': '6-31G', '6-31g*': '6-31G*'}
 
 
@@ -49,6 +49,13 @@ GEOMS = {
     'n2': [('N', 0, 0, 0.56), ('N', 0, 0, -0.56)],
     'oh': [('O', 0, 0, 0), ('H', 0, 0, 0.98)],
     'ch2': [('C', 0, 0, 0.1), ('H', 0, 0.99, -0.45), ('H', 0, -0.99, -0.45)],
+    # Third row (Na to Ar), for the crystal clusters.
+    'nacl': [('Na', 0, 0, 0), ('Cl', 0, 0, 2.38)],
+    'sih4': [('Si', 0, 0, 0), ('H', 0.8544, 0.8544, 0.8544), ('H', -0.8544, -0.8544, 0.8544),
+             ('H', -0.8544, 0.8544, -0.8544), ('H', 0.8544, -0.8544, -0.90)],
+    'h2s': [('S', 0, 0, 0.1030), ('H', 0, 0.9616, -0.8239), ('H', 0, -0.9616, -0.8239)],
+    'hcl': [('Cl', 0, 0, 0.0711), ('H', 0, 0, -1.2034)],
+    'mgo': [('Mg', 0, 0, 0), ('O', 0, 0, 1.76)],
 }
 
 
@@ -129,6 +136,13 @@ def write_fixtures():
         case('h2o_distorted', '6-31g*', 'rks', xc='pbe'),
         case('n2', '6-31g', 'rks', xc='pbe'),
         case('ch4', 'sto-3g', 'rks', xc='lda,vwn'),
+        case('nacl', 'sto-3g', 'rhf', mats=True, eri=True),
+        case('nacl', '6-31g*', 'rhf'),
+        case('sih4', '6-31g*', 'rhf'),
+        case('h2s', '6-31g', 'rhf'),
+        case('mgo', 'sto-3g', 'rhf'),
+        case('hcl', '6-31g', 'rks', xc='pbe'),
+        case('nacl', '6-31g', 'rks', xc='lda,vwn'),
     ]
     with open(os.path.join(ROOT, 'crates/qchem/tests/fixtures/pyscf-reference.json'), 'w') as f:
         json.dump(cases, f)

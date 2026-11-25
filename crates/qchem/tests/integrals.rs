@@ -1,7 +1,7 @@
 mod common;
 use common::*;
 use qchem::basis::Basis;
-use qchem::eri::{build_jk, compute_eris};
+use qchem::eri::{build_jk, compute_eri_part, compute_eris, EriTensor};
 use qchem::one_electron::one_electron_matrices;
 
 #[test]
@@ -14,15 +14,15 @@ fn basis_function_counts_match_pyscf() {
 
 #[test]
 fn one_electron_matrices_match_pyscf() {
-    for basis in ["sto-3g", "6-31g*"] {
-        let c = find("h2o", basis, "rhf", None);
+    for (name, basis) in [("h2o", "sto-3g"), ("h2o", "6-31g*"), ("nacl", "sto-3g")] {
+        let c = find(name, basis, "rhf", None);
         let mol = c.molecule();
         let b = Basis::new(&mol.atoms, c.basis_name()).unwrap();
         let m = one_electron_matrices(&b, &mol.atoms);
         let flat = |x: &Option<Vec<Vec<f64>>>| x.as_ref().unwrap().concat();
-        assert!(max_abs_diff(&m.s, &flat(&c.s)) < 1e-10, "S {basis}");
-        assert!(max_abs_diff(&m.t, &flat(&c.t)) < 1e-9, "T {basis}");
-        assert!(max_abs_diff(&m.v, &flat(&c.v)) < 1e-9, "V {basis}");
+        assert!(max_abs_diff(&m.s, &flat(&c.s)) < 1e-10, "S {name} {basis}");
+        assert!(max_abs_diff(&m.t, &flat(&c.t)) < 1e-9, "T {name} {basis}");
+        assert!(max_abs_diff(&m.v, &flat(&c.v)) < 1e-9, "V {name} {basis}");
     }
 }
 
@@ -39,8 +39,8 @@ fn basis_functions_are_normalized() {
 
 #[test]
 fn electron_repulsion_integrals_match_pyscf() {
-    for basis in ["sto-3g", "6-31g*"] {
-        let c = find("h2o", basis, "rhf", None);
+    for (name, basis) in [("h2o", "sto-3g"), ("h2o", "6-31g*"), ("nacl", "sto-3g")] {
+        let c = find(name, basis, "rhf", None);
         let mol = c.molecule();
         let b = Basis::new(&mol.atoms, c.basis_name()).unwrap();
         let eri = compute_eris(&b);
@@ -55,7 +55,7 @@ fn electron_repulsion_integrals_match_pyscf() {
             );
             worst = worst.max((eri.get(i, j, kk, l) - c.eri.as_ref().unwrap()[k]).abs());
         }
-        assert!(worst < 1e-10, "{basis}: {worst}");
+        assert!(worst < 1e-10, "{name} {basis}: {worst}");
     }
 }
 
@@ -111,4 +111,37 @@ fn coulomb_and_exchange_match_dense_contraction() {
             assert!((k[0][p * n + q] - kk).abs() < 1e-12);
         }
     }
+}
+
+#[test]
+fn eri_parts_reassemble_the_full_tensor() {
+    let c = find("c2h4", "sto-3g", "rhf", None);
+    let b = Basis::new(&c.molecule().atoms, c.basis_name()).unwrap();
+    let full = compute_eris(&b);
+    let parts: Vec<_> = (0..3).map(|k| compute_eri_part(&b, k, 3)).collect();
+    let merged = EriTensor::from_parts(b.nbf, parts.iter().map(|(i, v)| (&i[..], &v[..])));
+    assert_eq!(merged.data, full.data);
+}
+
+#[test]
+fn eri_gradient_parts_add_up_to_the_full_gradient() {
+    use qchem::eri::{eri_gradient, eri_gradient_part};
+    use qchem::{run_scf, ScfOptions};
+    let c = find("h2o_distorted", "6-31g*", "rhf", None);
+    let mol = c.molecule();
+    let res = run_scf(
+        &mol,
+        &ScfOptions::new(c.basis_name(), c.method_kind()),
+        None,
+    )
+    .unwrap();
+    let dt = res.total_density();
+    let n = mol.atoms.len();
+    let full = eri_gradient(&res.basis, n, &dt, &res.da, &res.db, 1.0);
+    let mut sum = vec![0.0; 3 * n];
+    for k in 0..4 {
+        let g = eri_gradient_part(&res.basis, n, &dt, &res.da, &res.db, 1.0, k, 4);
+        sum.iter_mut().zip(&g).for_each(|(s, v)| *s += v);
+    }
+    assert!(max_abs_diff(&sum, &full) < 1e-12);
 }

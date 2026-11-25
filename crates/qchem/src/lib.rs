@@ -1,4 +1,4 @@
-//! `qchem`: a small, dependency-light quantum chemistry engine for molecules made of H to Ne.
+//! `qchem`: a small, dependency-light quantum chemistry engine for molecules made of H to Ar.
 //!
 //! Hartree-Fock (RHF/UHF) and Kohn-Sham DFT (LDA, PBE) with cartesian Gaussian basis sets
 //! (STO-3G, 6-31G, 6-31G*), McMurchie-Davidson integrals, analytic nuclear gradients and a BFGS
@@ -24,10 +24,10 @@ pub mod volume;
 pub mod xc;
 
 pub use basis::{Basis, BasisName};
-pub use gradient::scf_gradient;
+pub use gradient::{scf_gradient, scf_gradient_with};
 pub use grid::GridLevel;
 pub use molecule::{Atom, Molecule};
-pub use scf::{run_scf, Method, OrbitalGuess, ScfOptions, ScfResult};
+pub use scf::{run_scf, run_scf_with_eris, Method, OrbitalGuess, ScfOptions, ScfResult};
 pub use xc::Functional;
 
 /// Error type for invalid input or unsupported requests.

@@ -127,7 +127,8 @@ describe('Session', () => {
   it('knows which elements each basis covers', () => {
     expect(qchem.hasBasis('sto-3g', 'Ne')).toBe(true);
     expect(qchem.hasBasis('6-31g*', 'C')).toBe(true);
-    expect(qchem.hasBasis('6-31g', 'Na')).toBe(false);
+    expect(qchem.hasBasis('6-31g', 'Cl')).toBe(true);
+    expect(qchem.hasBasis('6-31g', 'K')).toBe(false);
     expect(qchem.hasBasis('nope', 'H')).toBe(false);
   });
 });

@@ -7,10 +7,13 @@ import type { ComputeOutput } from '../src/engine/types';
 import { compute, inputFor, qchem, refCase } from './helpers/qchem';
 
 describe('elements', () => {
-  it('covers H to Ne in order', () => {
-    expect(ELEMENTS.map((e) => e.symbol)).toEqual(['H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne']);
+  it('covers H to Ar in order', () => {
+    expect(ELEMENTS.map((e) => e.symbol)).toEqual(
+      ['H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne', 'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar'],
+    );
     expect(element('o').z).toBe(8);
-    expect(() => element('Na')).toThrow(/Na/);
+    expect(element('cl').z).toBe(17);
+    expect(() => element('K')).toThrow(/K/);
   });
 });
 

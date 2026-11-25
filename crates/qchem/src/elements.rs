@@ -1,4 +1,4 @@
-//! Element data for H to Ne.
+//! Element data for H to Ar.
 
 pub const BOHR_PER_ANGSTROM: f64 = 1.0 / 0.529_177_210_92;
 pub const EV_PER_HARTREE: f64 = 27.211_386_245_988;
@@ -17,7 +17,7 @@ pub struct Element {
     pub covalent_radius: f64,
 }
 
-pub const ELEMENTS: [Element; 10] = [
+pub const ELEMENTS: [Element; 18] = [
     Element {
         symbol: "H",
         z: 1,
@@ -77,6 +77,54 @@ pub const ELEMENTS: [Element; 10] = [
         z: 10,
         mass: 20.18,
         covalent_radius: 0.58,
+    },
+    Element {
+        symbol: "Na",
+        z: 11,
+        mass: 22.99,
+        covalent_radius: 1.66,
+    },
+    Element {
+        symbol: "Mg",
+        z: 12,
+        mass: 24.305,
+        covalent_radius: 1.41,
+    },
+    Element {
+        symbol: "Al",
+        z: 13,
+        mass: 26.982,
+        covalent_radius: 1.21,
+    },
+    Element {
+        symbol: "Si",
+        z: 14,
+        mass: 28.085,
+        covalent_radius: 1.11,
+    },
+    Element {
+        symbol: "P",
+        z: 15,
+        mass: 30.974,
+        covalent_radius: 1.07,
+    },
+    Element {
+        symbol: "S",
+        z: 16,
+        mass: 32.06,
+        covalent_radius: 1.05,
+    },
+    Element {
+        symbol: "Cl",
+        z: 17,
+        mass: 35.45,
+        covalent_radius: 1.02,
+    },
+    Element {
+        symbol: "Ar",
+        z: 18,
+        mass: 39.948,
+        covalent_radius: 1.06,
     },
 ];
 

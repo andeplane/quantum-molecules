@@ -4,13 +4,126 @@
 use crate::basis::{cartesian_components, component_norms, Basis, Shell};
 use crate::hermite::{HermiteE, HermiteR};
 
+#[derive(Clone)]
 pub struct PrimPairData {
+    /// Schwarz bound sqrt(max |(ab|ab)|) of this primitive pair alone (infinite until
+    /// `shell_pairs` fills it in), used to skip negligible primitive quartets.
+    pub q: f64,
     pub a: f64,
     pub b: f64,
     pub p: f64,
     pub pc: [f64; 3],
     pub cc: f64,
     pub e: [HermiteE; 3],
+    /// Non-zero products E_t E_u E_v for every component pair (a, b), flattened; component pair
+    /// `k` owns `terms[ranges[k].0..ranges[k].1]`. Saves the zero tests and nested loops in the
+    /// integral kernel.
+    pub terms: Vec<HermiteTerm>,
+    pub ranges: Vec<(u32, u32)>,
+    /// Derivatives of the products for gradients (only for pairs built with `extra >= 1`):
+    /// component pair `k` owns `dterms[dranges[k].0..dranges[k].1]`.
+    pub dterms: Vec<DerivTerm>,
+    pub dranges: Vec<(u32, u32)>,
+}
+
+/// d/dA and d/dB (x, y, z) of E^{ab}_t E^{ab}_u E^{ab}_v.
+#[derive(Clone, Copy, Debug)]
+pub struct DerivTerm {
+    pub t: u8,
+    pub u: u8,
+    pub v: u8,
+    pub da: [f64; 3],
+    pub db: [f64; 3],
+}
+
+fn deriv_terms(
+    e: &[HermiteE; 3],
+    la: usize,
+    lb: usize,
+    ea: f64,
+    eb: f64,
+) -> (Vec<DerivTerm>, Vec<(u32, u32)>) {
+    let mut terms = Vec::new();
+    let mut ranges = Vec::new();
+    for a in cartesian_components(la) {
+        for b in cartesian_components(lb) {
+            let start = terms.len() as u32;
+            for t in 0..=a[0] + b[0] + 1 {
+                let ex = e[0].get(a[0] as isize, b[0] as isize, t);
+                let (dax, dbx) = (e[0].d_a(a[0], b[0], t, ea), e[0].d_b(a[0], b[0], t, eb));
+                for u in 0..=a[1] + b[1] + 1 {
+                    let ey = e[1].get(a[1] as isize, b[1] as isize, u);
+                    let (day, dby) = (e[1].d_a(a[1], b[1], u, ea), e[1].d_b(a[1], b[1], u, eb));
+                    for v in 0..=a[2] + b[2] + 1 {
+                        let ez = e[2].get(a[2] as isize, b[2] as isize, v);
+                        let (daz, dbz) = (e[2].d_a(a[2], b[2], v, ea), e[2].d_b(a[2], b[2], v, eb));
+                        let da = [dax * ey * ez, ex * day * ez, ex * ey * daz];
+                        let db = [dbx * ey * ez, ex * dby * ez, ex * ey * dbz];
+                        if da.iter().chain(&db).all(|&x| x == 0.0) {
+                            continue;
+                        }
+                        terms.push(DerivTerm {
+                            t: t as u8,
+                            u: u as u8,
+                            v: v as u8,
+                            da,
+                            db,
+                        });
+                    }
+                }
+            }
+            ranges.push((start, terms.len() as u32));
+        }
+    }
+    (terms, ranges)
+}
+
+/// One product of Hermite expansion coefficients, E^{ab}_t E^{ab}_u E^{ab}_v.
+#[derive(Clone, Copy, Debug)]
+pub struct HermiteTerm {
+    pub t: u8,
+    pub u: u8,
+    pub v: u8,
+    pub e: f64,
+    /// `e` times (-1)^(t+u+v), the form used on the ket side.
+    pub signed: f64,
+}
+
+fn hermite_terms(e: &[HermiteE; 3], la: usize, lb: usize) -> (Vec<HermiteTerm>, Vec<(u32, u32)>) {
+    let mut terms = Vec::new();
+    let mut ranges = Vec::new();
+    for a in cartesian_components(la) {
+        for b in cartesian_components(lb) {
+            let start = terms.len() as u32;
+            let (ox, oy, oz) = (
+                e[0].offset(a[0], b[0]),
+                e[1].offset(a[1], b[1]),
+                e[2].offset(a[2], b[2]),
+            );
+            for t in 0..=a[0] + b[0] {
+                let ex = e[0].data[ox + t];
+                for u in 0..=a[1] + b[1] {
+                    let exy = ex * e[1].data[oy + u];
+                    for v in 0..=a[2] + b[2] {
+                        let val = exy * e[2].data[oz + v];
+                        if val == 0.0 {
+                            continue;
+                        }
+                        let signed = if (t + u + v) & 1 == 1 { -val } else { val };
+                        terms.push(HermiteTerm {
+                            t: t as u8,
+                            u: u as u8,
+                            v: v as u8,
+                            e: val,
+                            signed,
+                        });
+                    }
+                }
+            }
+            ranges.push((start, terms.len() as u32));
+        }
+    }
+    (terms, ranges)
 }
 
 /// Precomputed data for a shell pair (i >= j).
@@ -47,7 +160,25 @@ impl ShellPair {
                 if (cc * e[0].data[0] * e[1].data[0] * e[2].data[0]).abs() < 1e-15 {
                     continue;
                 }
-                prims.push(PrimPairData { a, b, p, pc, cc, e });
+                let (terms, ranges) = hermite_terms(&e, sa.l, sb.l);
+                let (dterms, dranges) = if extra >= 1 {
+                    deriv_terms(&e, sa.l, sb.l, a, b)
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+                prims.push(PrimPairData {
+                    q: f64::INFINITY,
+                    a,
+                    b,
+                    p,
+                    pc,
+                    cc,
+                    e,
+                    terms,
+                    ranges,
+                    dterms,
+                    dranges,
+                });
             }
         }
         ShellPair {
@@ -78,6 +209,9 @@ const TWO_PI_2_5: f64 = 2.0 * 17.493_418_327_624_862; // 2 * pi^(5/2)
 pub struct EriWork {
     r: HermiteR,
     w: Vec<f64>,
+    h_off: Vec<usize>,
+    h_pos: Vec<usize>,
+    /// Scratch for the gradient kernel.
     y: Vec<f64>,
 }
 
@@ -89,24 +223,37 @@ impl EriWork {
 
 /// Raw integral block (no component normalization): out[ab * ncd + cd].
 pub fn eri_block(ab: &ShellPair, cd: &ShellPair, out: &mut Vec<f64>, wk: &mut EriWork) {
-    let ca = cartesian_components(ab.la);
-    let cb = cartesian_components(ab.lb);
-    let cc = cartesian_components(cd.la);
-    let cdc = cartesian_components(cd.lb);
-    let nab = ca.len() * cb.len();
-    let ncd = cc.len() * cdc.len();
+    let nab = cartesian_components(ab.la).len() * cartesian_components(ab.lb).len();
+    let ncd = cartesian_components(cd.la).len() * cartesian_components(cd.lb).len();
     out.clear();
     out.resize(nab * ncd, 0.0);
     let lab = ab.la + ab.lb;
     let lcd = cd.la + cd.lb;
     let l = lab + lcd;
+    let l1 = l + 1;
+    // Bra Hermite indices (t, u, v), t + u + v <= lab: their offsets into the R cube (the ket
+    // indices add to these) and their positions in the rows of `w`.
     let h = lab + 1;
-    let cube = h * h * h;
-    if wk.w.len() < ncd * cube {
-        wk.w.resize(ncd * cube, 0.0);
+    wk.h_off.clear();
+    wk.h_pos.clear();
+    wk.h_pos.resize(h * h * h, 0);
+    for t in 0..=lab {
+        for u in 0..=lab - t {
+            for v in 0..=lab - t - u {
+                wk.h_pos[(t * h + u) * h + v] = wk.h_off.len();
+                wk.h_off.push((t * l1 + u) * l1 + v);
+            }
+        }
+    }
+    let nh = wk.h_off.len();
+    if wk.w.len() < ncd * nh {
+        wk.w.resize(ncd * nh, 0.0);
     }
     for p1 in &ab.prims {
         for p2 in &cd.prims {
+            if p1.q * p2.q < PRIM_CUTOFF {
+                continue;
+            }
             let (p, q) = (p1.p, p2.p);
             let alpha = p * q / (p + q);
             let pref = TWO_PI_2_5 / (p * q * (p + q).sqrt()) * p1.cc * p2.cc;
@@ -117,82 +264,31 @@ pub fn eri_block(ab: &ShellPair, cd: &ShellPair, out: &mut Vec<f64>, wk: &mut Er
                 p1.pc[1] - p2.pc[1],
                 p1.pc[2] - p2.pc[2],
             );
-            let r = &wk.r;
-            let w = &mut wk.w;
-            let mut icd = 0;
-            for c in cc {
-                for d in cdc {
-                    let base = icd * cube;
-                    let (ox, oy, oz) = (
-                        p2.e[0].offset(c[0], d[0]),
-                        p2.e[1].offset(c[1], d[1]),
-                        p2.e[2].offset(c[2], d[2]),
-                    );
-                    for t in 0..=lab {
-                        for u in 0..=lab - t {
-                            for v in 0..=lab - t - u {
-                                let mut s = 0.0;
-                                for tau in 0..=c[0] + d[0] {
-                                    let ex = p2.e[0].data[ox + tau];
-                                    if ex == 0.0 {
-                                        continue;
-                                    }
-                                    for nu in 0..=c[1] + d[1] {
-                                        let exy = ex * p2.e[1].data[oy + nu];
-                                        if exy == 0.0 {
-                                            continue;
-                                        }
-                                        for phi in 0..=c[2] + d[2] {
-                                            let term = exy
-                                                * p2.e[2].data[oz + phi]
-                                                * r.at(t + tau, u + nu, v + phi);
-                                            if (tau + nu + phi) & 1 == 1 {
-                                                s -= term;
-                                            } else {
-                                                s += term;
-                                            }
-                                        }
-                                    }
-                                }
-                                w[base + (t * h + u) * h + v] = s;
-                            }
-                        }
+            let r = &wk.r.out[..l1 * l1 * l1];
+            let w = &mut wk.w[..ncd * nh];
+            let (h_off, h_pos) = (&wk.h_off, &wk.h_pos);
+            // Half transform over the ket: w[cd][tuv] = Σ_τνφ (-1)^(τ+ν+φ) E^cd_τνφ R_{t+τ,u+ν,v+φ}
+            for (icd, &(s0, s1)) in p2.ranges.iter().enumerate() {
+                let terms = &p2.terms[s0 as usize..s1 as usize];
+                let row = &mut w[icd * nh..(icd + 1) * nh];
+                for (slot, &off) in row.iter_mut().zip(h_off) {
+                    let mut acc = 0.0;
+                    for term in terms {
+                        let k =
+                            off + (term.t as usize * l1 + term.u as usize) * l1 + term.v as usize;
+                        acc += term.signed * r[k];
                     }
-                    icd += 1;
+                    *slot = acc;
                 }
             }
-            let mut iab = 0;
-            for a in ca {
-                for b in cb {
-                    let (ox, oy, oz) = (
-                        p1.e[0].offset(a[0], b[0]),
-                        p1.e[1].offset(a[1], b[1]),
-                        p1.e[2].offset(a[2], b[2]),
-                    );
-                    let row = iab * ncd;
-                    for t in 0..=a[0] + b[0] {
-                        let ex = p1.e[0].data[ox + t];
-                        if ex == 0.0 {
-                            continue;
-                        }
-                        for u in 0..=a[1] + b[1] {
-                            let exy = ex * p1.e[1].data[oy + u];
-                            if exy == 0.0 {
-                                continue;
-                            }
-                            for v in 0..=a[2] + b[2] {
-                                let e = pref * exy * p1.e[2].data[oz + v];
-                                if e == 0.0 {
-                                    continue;
-                                }
-                                let k = (t * h + u) * h + v;
-                                for c in 0..ncd {
-                                    out[row + c] += e * w[c * cube + k];
-                                }
-                            }
-                        }
+            for (iab, &(s0, s1)) in p1.ranges.iter().enumerate() {
+                let dst = &mut out[iab * ncd..(iab + 1) * ncd];
+                for term in &p1.terms[s0 as usize..s1 as usize] {
+                    let e = pref * term.e;
+                    let k = h_pos[(term.t as usize * h + term.u as usize) * h + term.v as usize];
+                    for (c, o) in dst.iter_mut().enumerate() {
+                        *o += e * w[c * nh + k];
                     }
-                    iab += 1;
                 }
             }
         }
@@ -223,6 +319,25 @@ impl EriTensor {
         }
     }
 
+    /// Assemble the tensor from the stripes of `compute_eri_part`.
+    pub fn from_parts<'a>(
+        n: usize,
+        parts: impl IntoIterator<Item = (&'a [u32], &'a [f64])>,
+    ) -> Self {
+        let mut eri = EriTensor::new(n);
+        for (index, value) in parts {
+            eri.add_part(index, value);
+        }
+        eri
+    }
+
+    /// Write one stripe from `compute_eri_part` into the tensor.
+    pub fn add_part(&mut self, index: &[u32], value: &[f64]) {
+        for (&k, &v) in index.iter().zip(value) {
+            self.data[k as usize] = v;
+        }
+    }
+
     #[inline(always)]
     pub fn index(&self, i: usize, j: usize, k: usize, l: usize) -> usize {
         pair_index(pair_index(i, j), pair_index(k, l))
@@ -240,6 +355,8 @@ pub struct ShellPairList {
 }
 
 pub const SCHWARZ_CUTOFF: f64 = 1e-12;
+/// Primitive quartets below this Schwarz bound are skipped; far below the accuracy that matters.
+const PRIM_CUTOFF: f64 = 1e-15;
 
 pub fn shell_pairs(basis: &Basis, extra: usize) -> ShellPairList {
     let mut pairs = Vec::new();
@@ -256,31 +373,68 @@ pub fn shell_pairs(basis: &Basis, extra: usize) -> ShellPairList {
     }
     let mut wk = EriWork::new();
     let mut blk = Vec::new();
-    let schwarz = pairs
+    let schwarz: Vec<f64> = pairs
         .iter()
-        .map(|pr| {
-            let (na, nb) = pr.ncomp();
-            let nab = na * nb;
-            eri_block(pr, pr, &mut blk, &mut wk);
-            let fa = component_norms(pr.la);
-            let fb = component_norms(pr.lb);
-            let mut m: f64 = 0.0;
-            for x in 0..nab {
-                let f = fa[x / nb] * fb[x % nb];
-                m = m.max(blk[x * nab + x].abs() * f * f);
-            }
-            m.sqrt()
-        })
+        .map(|pr| schwarz_bound(pr, &mut blk, &mut wk))
         .collect();
+    // Primitive bounds come after the shell bounds, which must not be screened themselves.
+    // For gradient pairs (extra = 1) the bound is on the integral, not its derivative, which
+    // only adds a factor of order the exponent; still far below what matters.
+    {
+        for pr in pairs.iter_mut() {
+            for k in 0..pr.prims.len() {
+                let single = ShellPair {
+                    prims: vec![pr.prims[k].clone()],
+                    ..*pr
+                };
+                pr.prims[k].q = schwarz_bound(&single, &mut blk, &mut wk);
+            }
+        }
+    }
     ShellPairList { pairs, schwarz }
 }
 
+/// sqrt(max |(ab|ab)|) over the components of a shell pair, with component norms applied.
+fn schwarz_bound(pr: &ShellPair, blk: &mut Vec<f64>, wk: &mut EriWork) -> f64 {
+    let (na, nb) = pr.ncomp();
+    let nab = na * nb;
+    eri_block(pr, pr, blk, wk);
+    let fa = component_norms(pr.la);
+    let fb = component_norms(pr.lb);
+    let mut m: f64 = 0.0;
+    for x in 0..nab {
+        let f = fa[x / nb] * fb[x % nb];
+        m = m.max(blk[x * nab + x].abs() * f * f);
+    }
+    m.sqrt()
+}
+
 pub fn compute_eris(basis: &Basis) -> EriTensor {
-    let list = shell_pairs(basis, 0);
     let mut eri = EriTensor::new(basis.nbf);
+    eri_stripe(basis, 0, 1, |k, v| eri.data[k] = v);
+    eri
+}
+
+/// The integrals of every `stride`-th shell-pair row starting at `part`, as packed indices and
+/// values. The stripes for `part = 0..stride` together hold exactly what `compute_eris` computes,
+/// so separate workers can share the work and the results be merged with `EriTensor::from_parts`.
+pub fn compute_eri_part(basis: &Basis, part: usize, stride: usize) -> (Vec<u32>, Vec<f64>) {
+    let mut index = Vec::new();
+    let mut value = Vec::new();
+    eri_stripe(basis, part, stride, |k, v| {
+        if v != 0.0 {
+            index.push(k as u32);
+            value.push(v);
+        }
+    });
+    (index, value)
+}
+
+fn eri_stripe(basis: &Basis, part: usize, stride: usize, mut store: impl FnMut(usize, f64)) {
+    let list = shell_pairs(basis, 0);
     let mut wk = EriWork::new();
     let mut blk = Vec::new();
-    for x in 0..list.pairs.len() {
+    for x in (part..list.pairs.len()).step_by(stride.max(1)) {
         for y in 0..=x {
             if list.schwarz[x] * list.schwarz[y] < SCHWARZ_CUTOFF {
                 continue;
@@ -302,9 +456,11 @@ pub fn compute_eris(basis: &Basis) -> EriTensor {
                     let fab = fa[a] * fb[b];
                     for c in 0..nc {
                         for d in 0..nd {
-                            let k =
-                                eri.index(ab.off_a + a, ab.off_b + b, cd.off_a + c, cd.off_b + d);
-                            eri.data[k] = blk[idx] * fab * fc[c] * fd[d];
+                            let k = pair_index(
+                                pair_index(ab.off_a + a, ab.off_b + b),
+                                pair_index(cd.off_a + c, cd.off_b + d),
+                            );
+                            store(k, blk[idx] * fab * fc[c] * fd[d]);
                             idx += 1;
                         }
                     }
@@ -312,7 +468,6 @@ pub fn compute_eris(basis: &Basis) -> EriTensor {
             }
         }
     }
-    eri
 }
 
 /// Coulomb matrix J[D] and exchange matrices K[D_m] (K_ik = Σ (ij|kl) D_jl) from packed ERIs.
@@ -380,6 +535,22 @@ pub fn eri_gradient(
     db: &[f64],
     kx: f64,
 ) -> Vec<f64> {
+    eri_gradient_part(basis, natom, dt, da, db, kx, 0, 1)
+}
+
+/// The share of `eri_gradient` from every `stride`-th shell-pair row starting at `part`; the
+/// shares for `part = 0..stride` add up to the full two-electron gradient.
+#[allow(clippy::too_many_arguments)]
+pub fn eri_gradient_part(
+    basis: &Basis,
+    natom: usize,
+    dt: &[f64],
+    da: &[f64],
+    db: &[f64],
+    kx: f64,
+    part: usize,
+    stride: usize,
+) -> Vec<f64> {
     let n = basis.nbf;
     let mut grad = vec![0.0; natom * 3];
     let list = shell_pairs(basis, 1);
@@ -399,7 +570,7 @@ pub fn eri_gradient(
     }
     let mut wk = EriWork::new();
     let mut gamma = Vec::new();
-    for x in 0..list.pairs.len() {
+    for x in (part..list.pairs.len()).step_by(stride.max(1)) {
         for y in 0..=x {
             let sch = list.schwarz[x] * list.schwarz[y];
             if sch < SCHWARZ_CUTOFF {
@@ -488,8 +659,23 @@ fn quartet_gradient(ab: &ShellPair, cd: &ShellPair, gamma: &[f64], wk: &mut EriW
     if wk.y.len() < need {
         wk.y.resize(need, 0.0);
     }
+    // Bra Hermite indices t + u + v <= lab: their slots in `y` (h_pos) and R offsets (h_off).
+    let l1 = l + 1;
+    wk.h_off.clear();
+    wk.h_pos.clear();
+    for t in 0..=lab {
+        for u in 0..=lab - t {
+            for v in 0..=lab - t - u {
+                wk.h_pos.push((t * h + u) * h + v);
+                wk.h_off.push((t * l1 + u) * l1 + v);
+            }
+        }
+    }
     for p1 in &ab.prims {
         for p2 in &cd.prims {
+            if p1.q * p2.q < PRIM_CUTOFF {
+                continue;
+            }
             let (p, q) = (p1.p, p2.p);
             let alpha = p * q / (p + q);
             let pref = TWO_PI_2_5 / (p * q * (p + q).sqrt()) * p1.cc * p2.cc;
@@ -505,174 +691,71 @@ fn quartet_gradient(ab: &ShellPair, cd: &ShellPair, gamma: &[f64], wk: &mut EriW
             let y = &mut wk.y;
 
             // Bra derivatives: W^cd_tuv for t+u+v <= lab+1.
-            let mut icd = 0;
-            for c in cc {
-                for d in cdc {
-                    let base = icd * cube;
-                    let (ox, oy, oz) = (
-                        p2.e[0].offset(c[0], d[0]),
-                        p2.e[1].offset(c[1], d[1]),
-                        p2.e[2].offset(c[2], d[2]),
-                    );
-                    for t in 0..=lab + 1 {
-                        for u in 0..=lab + 1 - t {
-                            for v in 0..=lab + 1 - t - u {
-                                let mut s = 0.0;
-                                for tau in 0..=c[0] + d[0] {
-                                    let ex = p2.e[0].data[ox + tau];
-                                    if ex == 0.0 {
-                                        continue;
-                                    }
-                                    for nu in 0..=c[1] + d[1] {
-                                        let exy = ex * p2.e[1].data[oy + nu];
-                                        if exy == 0.0 {
-                                            continue;
-                                        }
-                                        for phi in 0..=c[2] + d[2] {
-                                            let term = exy
-                                                * p2.e[2].data[oz + phi]
-                                                * r.at(t + tau, u + nu, v + phi);
-                                            if (tau + nu + phi) & 1 == 1 {
-                                                s -= term;
-                                            } else {
-                                                s += term;
-                                            }
-                                        }
-                                    }
-                                }
-                                w[base + (t * h + u) * h + v] = s;
+            let rr = &r.out[..l1 * l1 * l1];
+            for (icd, &(s0, s1)) in p2.ranges.iter().enumerate() {
+                let base = icd * cube;
+                let terms = &p2.terms[s0 as usize..s1 as usize];
+                for t in 0..=lab + 1 {
+                    for u in 0..=lab + 1 - t {
+                        for v in 0..=lab + 1 - t - u {
+                            let off = (t * l1 + u) * l1 + v;
+                            let mut acc = 0.0;
+                            for term in terms {
+                                let k = off
+                                    + (term.t as usize * l1 + term.u as usize) * l1
+                                    + term.v as usize;
+                                acc += term.signed * rr[k];
                             }
+                            w[base + (t * h + u) * h + v] = acc;
                         }
                     }
-                    icd += 1;
                 }
             }
-            let mut iab = 0;
-            for a in ca {
-                for b in cb {
-                    let yb = iab * cube;
-                    y[yb..yb + cube].fill(0.0);
-                    let mut any = false;
-                    for c in 0..ncd {
-                        let gv = gamma[iab * ncd + c];
-                        if gv == 0.0 {
-                            continue;
-                        }
-                        any = true;
-                        let wb = c * cube;
-                        for k in 0..cube {
-                            y[yb + k] += gv * w[wb + k];
-                        }
+            for iab in 0..nab {
+                let grow = &gamma[iab * ncd..(iab + 1) * ncd];
+                if grow.iter().all(|&x| x == 0.0) {
+                    continue;
+                }
+                let (s0, s1) = p1.dranges[iab];
+                for term in &p1.dterms[s0 as usize..s1 as usize] {
+                    let k = (term.t as usize * h + term.u as usize) * h + term.v as usize;
+                    let mut yv = 0.0;
+                    for (c, &gv) in grow.iter().enumerate() {
+                        yv += gv * w[c * cube + k];
                     }
-                    if any {
-                        let (ea, eb) = (p1.a, p1.b);
-                        let (exs, eys, ezs) = (&p1.e[0], &p1.e[1], &p1.e[2]);
-                        for t in 0..=a[0] + b[0] + 1 {
-                            let ex = exs.get(a[0] as isize, b[0] as isize, t);
-                            let dax = exs.d_a(a[0], b[0], t, ea);
-                            let dbx = exs.d_b(a[0], b[0], t, eb);
-                            for u in 0..=a[1] + b[1] + 1 {
-                                let ey = eys.get(a[1] as isize, b[1] as isize, u);
-                                let day = eys.d_a(a[1], b[1], u, ea);
-                                let dby = eys.d_b(a[1], b[1], u, eb);
-                                for v in 0..=a[2] + b[2] + 1 {
-                                    let yv = pref * y[yb + (t * h + u) * h + v];
-                                    if yv == 0.0 {
-                                        continue;
-                                    }
-                                    let ez = ezs.get(a[2] as isize, b[2] as isize, v);
-                                    let daz = ezs.d_a(a[2], b[2], v, ea);
-                                    let dbz = ezs.d_b(a[2], b[2], v, eb);
-                                    g[0] += dax * ey * ez * yv;
-                                    g[1] += ex * day * ez * yv;
-                                    g[2] += ex * ey * daz * yv;
-                                    g[3] += dbx * ey * ez * yv;
-                                    g[4] += ex * dby * ez * yv;
-                                    g[5] += ex * ey * dbz * yv;
-                                }
-                            }
-                        }
+                    yv *= pref;
+                    for x in 0..3 {
+                        g[x] += term.da[x] * yv;
+                        g[3 + x] += term.db[x] * yv;
                     }
-                    iab += 1;
                 }
             }
 
             // Ket derivative: G^cd_tuv = Σ_ab Γ_abcd E^ab_tuv (t+u+v <= lab), stored in y.
             y[..ncd * cube].fill(0.0);
-            iab = 0;
-            for a in ca {
-                for b in cb {
-                    let (ox, oy, oz) = (
-                        p1.e[0].offset(a[0], b[0]),
-                        p1.e[1].offset(a[1], b[1]),
-                        p1.e[2].offset(a[2], b[2]),
-                    );
-                    for t in 0..=a[0] + b[0] {
-                        let ex = p1.e[0].data[ox + t];
-                        if ex == 0.0 {
-                            continue;
-                        }
-                        for u in 0..=a[1] + b[1] {
-                            let exy = ex * p1.e[1].data[oy + u];
-                            if exy == 0.0 {
-                                continue;
-                            }
-                            for v in 0..=a[2] + b[2] {
-                                let e = exy * p1.e[2].data[oz + v];
-                                if e == 0.0 {
-                                    continue;
-                                }
-                                let k = (t * h + u) * h + v;
-                                for c in 0..ncd {
-                                    y[c * cube + k] += gamma[iab * ncd + c] * e;
-                                }
-                            }
-                        }
+            for (iab, &(s0, s1)) in p1.ranges.iter().enumerate() {
+                for term in &p1.terms[s0 as usize..s1 as usize] {
+                    let k = (term.t as usize * h + term.u as usize) * h + term.v as usize;
+                    for c in 0..ncd {
+                        y[c * cube + k] += gamma[iab * ncd + c] * term.e;
                     }
-                    iab += 1;
                 }
             }
-            icd = 0;
-            for c in cc {
-                for d in cdc {
-                    let yb = icd * cube;
-                    let ec = p2.a;
-                    let (exs, eys, ezs) = (&p2.e[0], &p2.e[1], &p2.e[2]);
-                    for tau in 0..=c[0] + d[0] + 1 {
-                        let ex = exs.get(c[0] as isize, d[0] as isize, tau);
-                        let dcx = exs.d_a(c[0], d[0], tau, ec);
-                        for nu in 0..=c[1] + d[1] + 1 {
-                            let ey = eys.get(c[1] as isize, d[1] as isize, nu);
-                            let dcy = eys.d_a(c[1], d[1], nu, ec);
-                            for phi in 0..=c[2] + d[2] + 1 {
-                                let ez = ezs.get(c[2] as isize, d[2] as isize, phi);
-                                let dcz = ezs.d_a(c[2], d[2], phi, ec);
-                                let w0 = dcx * ey * ez;
-                                let w1 = ex * dcy * ez;
-                                let w2 = ex * ey * dcz;
-                                if w0 == 0.0 && w1 == 0.0 && w2 == 0.0 {
-                                    continue;
-                                }
-                                let mut s = 0.0;
-                                for t in 0..=lab {
-                                    for u in 0..=lab - t {
-                                        let gb = yb + (t * h + u) * h;
-                                        for v in 0..=lab - t - u {
-                                            s += y[gb + v] * r.at(t + tau, u + nu, v + phi);
-                                        }
-                                    }
-                                }
-                                if (tau + nu + phi) & 1 == 1 {
-                                    s = -s;
-                                }
-                                s *= pref;
-                                g[6] += w0 * s;
-                                g[7] += w1 * s;
-                                g[8] += w2 * s;
-                            }
-                        }
+            for (icd, &(s0, s1)) in p2.dranges.iter().enumerate() {
+                let yb = icd * cube;
+                for term in &p2.dterms[s0 as usize..s1 as usize] {
+                    let shift = (term.t as usize * l1 + term.u as usize) * l1 + term.v as usize;
+                    let mut acc = 0.0;
+                    for (&yo, &ro) in wk.h_pos.iter().zip(&wk.h_off) {
+                        acc += y[yb + yo] * rr[ro + shift];
                     }
-                    icd += 1;
+                    if (term.t + term.u + term.v) & 1 == 1 {
+                        acc = -acc;
+                    }
+                    acc *= pref;
+                    for x in 0..3 {
+                        g[6 + x] += term.da[x] * acc;
+                    }
                 }
             }
         }

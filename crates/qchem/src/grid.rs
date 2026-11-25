@@ -75,7 +75,11 @@ pub fn molecular_grid(atoms: &[Atom], level: GridLevel) -> MolecularGrid {
         } else {
             radial
         };
-        let alpha_mk = if atom.z == 3 || atom.z == 4 { 7.0 } else { 5.0 };
+        let alpha_mk = if matches!(atom.z, 3 | 4 | 11 | 12) {
+            7.0
+        } else {
+            5.0
+        };
         for ir in 0..nr {
             let x = (ir as f64 + 0.5) / nr as f64;
             let x3 = x * x * x;
