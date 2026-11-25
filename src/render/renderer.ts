@@ -10,6 +10,8 @@ export interface SphereInstance {
   radius: number;
   color: Vec3;
   highlight: boolean;
+  /** Drawn faded: part of the picture (the crystal around a cluster) but not of the calculation. */
+  ghost?: boolean;
 }
 
 export interface BondInstance {
@@ -18,6 +20,19 @@ export interface BondInstance {
   radius: number;
   colorA: Vec3;
   colorB: Vec3;
+  ghost?: boolean;
+}
+
+function packSpheres(spheres: SphereInstance[]): Float32Array<ArrayBuffer> {
+  const s = new Float32Array(Math.max(1, spheres.length) * 8);
+  spheres.forEach((a, i) => s.set([...a.center, a.radius, ...a.color, a.highlight ? 1 : 0], 8 * i));
+  return s;
+}
+
+function packBonds(bonds: BondInstance[]): Float32Array<ArrayBuffer> {
+  const b = new Float32Array(Math.max(1, bonds.length) * 13);
+  bonds.forEach((d, i) => b.set([...d.a, d.radius, ...d.b, ...d.colorA, ...d.colorB], 13 * i));
+  return b;
 }
 
 export interface ViewSettings {
@@ -63,8 +78,14 @@ export class Renderer {
   private sphereCount = 0;
   private bondBuffer: GPUBuffer | null = null;
   private bondCount = 0;
+  private ghostSphereBuffer: GPUBuffer | null = null;
+  private ghostSphereCount = 0;
+  private ghostBondBuffer: GPUBuffer | null = null;
+  private ghostBondCount = 0;
   private spherePipeline: GPURenderPipeline;
   private bondPipeline: GPURenderPipeline;
+  private ghostSpherePipeline: GPURenderPipeline;
+  private ghostBondPipeline: GPURenderPipeline;
   private rayPipeline: GPURenderPipeline;
   private volumePipeline: GPUComputePipeline;
   private atomsBindGroup: GPUBindGroup;
@@ -111,33 +132,49 @@ export class Renderer {
     const depthStencil: GPUDepthStencilState = { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less' };
     const f32x3 = (shaderLocation: number, offset: number): GPUVertexAttribute => ({ shaderLocation, offset, format: 'float32x3' });
     const f32x1 = (shaderLocation: number, offset: number): GPUVertexAttribute => ({ shaderLocation, offset, format: 'float32' });
-    this.spherePipeline = device.createRenderPipeline({
-      label: 'spheres',
-      layout: atomsLayout,
-      vertex: {
-        module: atomsModule,
-        entryPoint: 'sphereVs',
-        buffers: [{ arrayStride: 32, stepMode: 'instance', attributes: [f32x3(0, 0), f32x1(1, 12), f32x3(2, 16), f32x1(3, 28)] }],
+    // Ghosts blend over the opaque atoms (premultiplied alpha) and are hidden behind them, but do
+    // not hide each other or the electron cloud.
+    const ghostTarget: GPUColorTargetState = {
+      format,
+      blend: {
+        color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
+        alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' },
       },
-      fragment: { module: atomsModule, entryPoint: 'sphereFs', targets: [{ format }] },
-      primitive: { topology: 'triangle-strip' },
-      depthStencil,
-    });
-    this.bondPipeline = device.createRenderPipeline({
-      label: 'bonds',
-      layout: atomsLayout,
-      vertex: {
-        module: atomsModule,
-        entryPoint: 'bondVs',
-        buffers: [
-          { arrayStride: 52, stepMode: 'instance', attributes: [f32x3(0, 0), f32x1(1, 12), f32x3(2, 16), f32x3(3, 28), f32x3(4, 40)] },
-          { arrayStride: 12, stepMode: 'vertex', attributes: [f32x3(5, 0)] },
-        ],
-      },
-      fragment: { module: atomsModule, entryPoint: 'bondFs', targets: [{ format }] },
-      primitive: { topology: 'triangle-list', cullMode: 'back' },
-      depthStencil,
-    });
+    };
+    const ghostDepth: GPUDepthStencilState = { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'less' };
+    const spheres = (ghost: boolean) =>
+      device.createRenderPipeline({
+        label: ghost ? 'ghost spheres' : 'spheres',
+        layout: atomsLayout,
+        vertex: {
+          module: atomsModule,
+          entryPoint: 'sphereVs',
+          buffers: [{ arrayStride: 32, stepMode: 'instance', attributes: [f32x3(0, 0), f32x1(1, 12), f32x3(2, 16), f32x1(3, 28)] }],
+        },
+        fragment: { module: atomsModule, entryPoint: ghost ? 'sphereGhostFs' : 'sphereFs', targets: [ghost ? ghostTarget : { format }] },
+        primitive: { topology: 'triangle-strip' },
+        depthStencil: ghost ? ghostDepth : depthStencil,
+      });
+    const bonds = (ghost: boolean) =>
+      device.createRenderPipeline({
+        label: ghost ? 'ghost bonds' : 'bonds',
+        layout: atomsLayout,
+        vertex: {
+          module: atomsModule,
+          entryPoint: 'bondVs',
+          buffers: [
+            { arrayStride: 52, stepMode: 'instance', attributes: [f32x3(0, 0), f32x1(1, 12), f32x3(2, 16), f32x3(3, 28), f32x3(4, 40)] },
+            { arrayStride: 12, stepMode: 'vertex', attributes: [f32x3(5, 0)] },
+          ],
+        },
+        fragment: { module: atomsModule, entryPoint: ghost ? 'bondGhostFs' : 'bondFs', targets: [ghost ? ghostTarget : { format }] },
+        primitive: { topology: 'triangle-list', cullMode: 'back' },
+        depthStencil: ghost ? ghostDepth : depthStencil,
+      });
+    this.spherePipeline = spheres(false);
+    this.bondPipeline = bonds(false);
+    this.ghostSpherePipeline = spheres(true);
+    this.ghostBondPipeline = bonds(true);
     this.atomsBindGroup = device.createBindGroup({
       layout: this.cameraLayout(),
       entries: [{ binding: 0, resource: { buffer: this.cameraBuffer } }],
@@ -188,24 +225,29 @@ export class Renderer {
     });
   }
 
+  /** Opaque atoms and bonds; instances marked `ghost` are drawn see-through on top of them. */
   setAtoms(spheres: SphereInstance[], bonds: BondInstance[]) {
-    const s = new Float32Array(Math.max(1, spheres.length) * 8);
-    spheres.forEach((a, i) => s.set([...a.center, a.radius, ...a.color, a.highlight ? 1 : 0], 8 * i));
-    if (!this.sphereBuffer || this.sphereBuffer.size < s.byteLength) {
-      this.sphereBuffer?.destroy();
-      this.sphereBuffer = this.device.createBuffer({ size: s.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-    }
-    this.device.queue.writeBuffer(this.sphereBuffer, 0, s);
-    this.sphereCount = spheres.length;
+    const solid = spheres.filter((s) => !s.ghost);
+    const ghosts = spheres.filter((s) => s.ghost);
+    this.sphereBuffer = this.upload(this.sphereBuffer, packSpheres(solid));
+    this.sphereCount = solid.length;
+    this.ghostSphereBuffer = this.upload(this.ghostSphereBuffer, packSpheres(ghosts));
+    this.ghostSphereCount = ghosts.length;
+    const solidBonds = bonds.filter((b) => !b.ghost);
+    const ghostBonds = bonds.filter((b) => b.ghost);
+    this.bondBuffer = this.upload(this.bondBuffer, packBonds(solidBonds));
+    this.bondCount = solidBonds.length;
+    this.ghostBondBuffer = this.upload(this.ghostBondBuffer, packBonds(ghostBonds));
+    this.ghostBondCount = ghostBonds.length;
+  }
 
-    const b = new Float32Array(Math.max(1, bonds.length) * 13);
-    bonds.forEach((d, i) => b.set([...d.a, d.radius, ...d.b, ...d.colorA, ...d.colorB], 13 * i));
-    if (!this.bondBuffer || this.bondBuffer.size < b.byteLength) {
-      this.bondBuffer?.destroy();
-      this.bondBuffer = this.device.createBuffer({ size: b.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  private upload(buffer: GPUBuffer | null, data: Float32Array<ArrayBuffer>): GPUBuffer {
+    if (!buffer || buffer.size < data.byteLength) {
+      buffer?.destroy();
+      buffer = this.device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
     }
-    this.device.queue.writeBuffer(this.bondBuffer, 0, b);
-    this.bondCount = bonds.length;
+    this.device.queue.writeBuffer(buffer, 0, data);
+    return buffer;
   }
 
   /** Evaluate the density and the selected orbital on the GPU grid. */
@@ -290,6 +332,19 @@ export class Renderer {
       atomsPass.setBindGroup(0, this.atomsBindGroup);
       atomsPass.setVertexBuffer(0, this.sphereBuffer);
       atomsPass.draw(4, this.sphereCount);
+    }
+    if (this.ghostBondCount > 0 && this.ghostBondBuffer) {
+      atomsPass.setPipeline(this.ghostBondPipeline);
+      atomsPass.setBindGroup(0, this.atomsBindGroup);
+      atomsPass.setVertexBuffer(0, this.ghostBondBuffer);
+      atomsPass.setVertexBuffer(1, this.ringBuffer);
+      atomsPass.draw(this.ringCount, this.ghostBondCount);
+    }
+    if (this.ghostSphereCount > 0 && this.ghostSphereBuffer) {
+      atomsPass.setPipeline(this.ghostSpherePipeline);
+      atomsPass.setBindGroup(0, this.atomsBindGroup);
+      atomsPass.setVertexBuffer(0, this.ghostSphereBuffer);
+      atomsPass.draw(4, this.ghostSphereCount);
     }
     atomsPass.end();
 

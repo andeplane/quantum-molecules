@@ -69,7 +69,8 @@ describe('presets', () => {
 
   it('converge with Hartree-Fock in their largest basis', () => {
     const session = new qchem.Session();
-    for (const p of PRESETS) {
+    // The larger ones are checked against PySCF below.
+    for (const p of PRESETS.filter((p) => p.group === 'small' || p.bases.length > 1)) {
       const basis = p.bases[p.bases.length - 1];
       const out = session.compute({
         atoms: parseXyz(p.xyz),
@@ -83,6 +84,25 @@ describe('presets', () => {
       expect(out.energy, p.id).toBeLessThan(0);
     }
     session.free();
+  });
+
+  // PySCF 2.15 RHF/STO-3G (cartesian), conv_tol 1e-10, on exactly these preset geometries.
+  const PYSCF: Record<string, number> = {
+    glycine: -279.11705833,
+    pyridine: -243.63861188,
+    aspirin: -636.65711854,
+    glucose: -674.46500479,
+    diamond: -383.51437173,
+    silicon: -2865.59517594,
+    graphite: -604.29386431,
+    nacl: -2458.33388310,
+    mgo: -1083.81081606,
+  };
+
+  it.each(Object.entries(PYSCF))('%s matches PySCF (RHF/STO-3G)', (id, energy) => {
+    const out = compute({ atoms: parseXyz(preset(id).xyz), charge: 0, multiplicity: 1, basis: 'sto-3g', method: 'hf' });
+    expect(out.converged).toBe(true);
+    expect(Math.abs(out.energy - energy)).toBeLessThan(1e-6);
   });
 
   it('give the known STO-3G energy of benzene', () => {

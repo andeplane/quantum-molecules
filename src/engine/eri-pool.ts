@@ -27,6 +27,12 @@ export type EriPartResponse =
  */
 export const PARALLEL_MIN_ATOMS = 8;
 
+/** One integral worker per hardware thread, at most 16; `?threads=1` turns the pool off. */
+export function workerThreads(params: URLSearchParams): number {
+  const n = Number(params.get('threads')) || navigator.hardwareConcurrency || 4;
+  return Math.max(1, Math.min(16, Math.round(n)));
+}
+
 /**
  * Spreads the two-electron integrals, the slowest step of every calculation, over several
  * workers. Each worker computes every `stride`-th row of shell pairs, and the engine assembles

@@ -550,3 +550,24 @@ button.link {
   color: var(--accent);
   margin: 12px 0 8px;
 }
+
+.crystal-note {
+  margin: 8px 0 4px;
+  padding: 7px 9px;
+  border-left: 2px solid rgba(232, 184, 92, 0.7);
+  background: rgba(232, 184, 92, 0.07);
+  border-radius: 0 6px 6px 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.swatch.ghost {
+  background: radial-gradient(circle at 35% 35%, #4a4f60, #262a38);
+  border-radius: 50%;
+}
+
+.swatch.cell {
+  background: none;
+  border: 1.5px solid #c9a55a;
+  border-radius: 2px;
+}

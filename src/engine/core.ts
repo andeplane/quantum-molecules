@@ -43,11 +43,13 @@ export function createEngine(qchem: QchemModule, post: (msg: WorkerResponse) => 
   };
 
   const computeParallel = async (input: ComputeInput, eris: EriSource): Promise<ComputeOutput> => {
+    const t0 = performance.now();
     const out = session.compute({ ...input, gradient: false }, await eris.parts(input)) as ComputeOutput;
-    if (!input.gradient) return out;
+    // The time includes the integrals computed by the other workers.
+    if (!input.gradient) return { ...out, millis: performance.now() - t0 };
     const twoElectron = await eris.gradient(input, session.densities() as Densities);
     const g = session.gradient(twoElectron) as { gradient: number[]; maxForce: number };
-    return { ...out, gradient: g.gradient, maxForce: g.maxForce };
+    return { ...out, gradient: g.gradient, maxForce: g.maxForce, millis: performance.now() - t0 };
   };
 
   async function relax(id: number, input: ComputeInput, maxSteps: number) {
@@ -91,6 +93,9 @@ export function createEngine(qchem: QchemModule, post: (msg: WorkerResponse) => 
           break;
         case 'reset':
           session.reset();
+          break;
+        case 'configure':
+          // Handled by the worker, which owns the integral workers.
           break;
       }
     } catch (e) {

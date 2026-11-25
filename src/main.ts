@@ -1,7 +1,9 @@
+import { CRYSTALS, buildCrystal, type CrystalScene, type CrystalSpec } from './chem/crystals';
 import { electronCount, parseXyz, toXyz, type Atom } from './chem/molecule';
-import { BLURBS, PRESETS, preset } from './chem/presets';
+import { BLURBS, GROUP_NAMES, PRESETS, preset, type PresetGroup } from './chem/presets';
 import { orbitalLevels } from './chem/orbitals';
 import { EngineClient } from './engine/client';
+import { PARALLEL_MIN_ATOMS, workerThreads } from './engine/eri-pool';
 import type { BasisName, ComputeInput, ComputeOutput, MethodName } from './engine/types';
 import { OrbitCamera } from './render/camera';
 import { add, dot, raySphere, scale, sub, type Vec3 } from './render/math';
@@ -10,7 +12,7 @@ import { volumeInputs, type OrbitalSelection } from './render/volume-data';
 import { readouts } from './ui/format';
 import { describeOrbital, legendElements } from './ui/legend';
 import { renderDiagram } from './ui/orbital-diagram';
-import { atomRadius, boundingSphere, buildScene } from './ui/scene';
+import { atomRadius, boundingSphere, buildScene, crystalExtras } from './ui/scene';
 import { currentTip, type TipEvent } from './ui/tips';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -59,6 +61,12 @@ const ui = {
   restartTips: $<HTMLButtonElement>('restart-tips'),
   introMore: $<HTMLDetailsElement>('intro-more'),
   settings: $<HTMLDetailsElement>('settings'),
+  crystalBox: $('crystal-box'),
+  crystalNote: $('crystal-note'),
+  showCrystal: $<HTMLInputElement>('show-crystal'),
+  crystalRepeats: $<HTMLInputElement>('crystal-repeats'),
+  crystalRepeatsLabel: $('crystal-repeats-label'),
+  legendCrystal: $('legend-crystal'),
 };
 
 interface State {
@@ -75,6 +83,8 @@ interface State {
   frame: number | null;
   relaxId: number | null;
   hover: number | null;
+  /** The crystal a cluster preset was cut from, and the lattice drawn around it. */
+  crystal: { spec: CrystalSpec; scene: CrystalScene } | null;
 }
 
 const state: State = {
@@ -89,6 +99,7 @@ const state: State = {
   frame: null,
   relaxId: null,
   hover: null,
+  crystal: null,
 };
 
 const camera = new OrbitCamera();
@@ -98,6 +109,9 @@ let renderer: Renderer | null = null;
 const headless = new URLSearchParams(location.search).has('headless');
 /** Grid points along the longest box edge; `?res=64` lowers it for slow GPUs. */
 const volumeResolution = Math.max(16, Math.min(160, Number(new URLSearchParams(location.search).get('res')) || 112));
+/** Integral workers the engine starts (see `EriPool`); `?threads=1` turns them off. */
+const engineThreads = workerThreads(new URLSearchParams(location.search));
+engine.configure(engineThreads);
 let needsRender = true;
 let playTimer: number | null = null;
 
@@ -133,9 +147,57 @@ function input(extra: Partial<ComputeInput> = {}): ComputeInput {
 
 function updateScene() {
   if (!renderer) return;
-  const { spheres, bonds } = buildScene(state.atoms, state.hover);
+  const crystal = state.crystal;
+  const { spheres, bonds } = buildScene(state.atoms, state.hover, crystal ? crystal.spec.bond * 1.15 : undefined);
+  if (crystal && ui.showCrystal.checked) {
+    const extra = crystalExtras(crystal.scene, state.atoms);
+    spheres.push(...extra.spheres);
+    bonds.push(...extra.bonds);
+  }
   renderer.setAtoms(spheres, bonds);
   needsRender = true;
+}
+
+/**
+ * Frame the atoms, and enough of the crystal around them to see where they sit; a big block of
+ * crystal may run off the screen, which is what crystals do.
+ */
+function fitCamera() {
+  const own = boundingSphere(state.atoms);
+  const c = state.crystal;
+  if (!c || !ui.showCrystal.checked) return camera.fit(own.center, own.radius);
+  const all = boundingSphere([...state.atoms, ...c.scene.ghosts]);
+  camera.fit(own.center, Math.max(own.radius * 1.15, Math.min(all.radius, own.radius * 1.9)));
+}
+
+function setCrystal(id: string | undefined) {
+  const spec = id ? CRYSTALS[id] : undefined;
+  ui.crystalBox.hidden = !spec;
+  ui.legendCrystal.hidden = !spec || !ui.showCrystal.checked;
+  if (!spec) {
+    state.crystal = null;
+    return;
+  }
+  ui.crystalRepeats.max = String(spec.maxRepeats);
+  ui.crystalRepeats.value = String(spec.repeats);
+  state.crystal = { spec, scene: buildCrystal(spec, spec.repeats) };
+  syncCrystal();
+}
+
+function syncCrystal() {
+  const c = state.crystal;
+  if (!c) return;
+  const n = Number(ui.crystalRepeats.value);
+  c.scene = buildCrystal(c.spec, n);
+  ui.crystalRepeatsLabel.textContent = [0, 1, 2].map((d) => (c.spec.fixedAxes?.includes(d) ? 1 : n)).join(' × ');
+  const { cluster, caps } = c.scene;
+  const electrons = electronCount({ atoms: cluster, charge: 0, multiplicity: 1 });
+  ui.crystalNote.textContent =
+    `Calculated: the ${cluster.length} bright atoms (${electrons} electrons)` +
+    (caps ? `, ${cluster.length - caps} from the crystal plus ${caps} hydrogens on the cut bonds. ` : '. ') +
+    'The faded atoms are the rest of the crystal, drawn from its structure but not calculated: ' +
+    'the program solves finite molecules, not endless crystals.';
+  ui.legendCrystal.hidden = !ui.showCrystal.checked;
 }
 
 function updateVolume() {
@@ -167,13 +229,15 @@ function placeLabels() {
   while (ui.labels.children.length > atoms.length) ui.labels.lastElementChild!.remove();
   const m = camera.viewProjection;
   const r = ui.canvas.getBoundingClientRect();
+  // In big molecules a label on every hydrogen is clutter; label the other atoms only.
+  const skipHydrogen = atoms.length > 14;
   atoms.forEach((a, i) => {
     const el = ui.labels.children[i] as HTMLElement;
     const [x, y, z] = a.xyz;
     const w = m[3] * x + m[7] * y + m[11] * z + m[15];
     el.textContent = a.symbol;
-    el.hidden = w <= 0;
-    if (w <= 0) return;
+    el.hidden = w <= 0 || (skipHydrogen && a.symbol === 'H');
+    if (el.hidden) return;
     const sx = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w;
     const sy = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w;
     el.style.transform = `translate(${r.left + ((sx + 1) / 2) * r.width}px, ${r.top + ((1 - sy) / 2) * r.height}px) translate(-50%, -50%)`;
@@ -262,7 +326,8 @@ function updateLegend() {
 }
 
 function describe(res: ComputeOutput) {
-  return `Solved in ${Math.round(res.millis)} ms (${res.iterations} steps)`;
+  const cores = state.atoms.length >= PARALLEL_MIN_ATOMS && engineThreads > 1 ? `, integrals shared over ${engineThreads} CPU threads` : '';
+  return `Solved in ${Math.round(res.millis)} ms (${res.iterations} steps${cores})`;
 }
 
 async function recompute(opts: { history?: boolean } = {}) {
@@ -293,8 +358,7 @@ function setMolecule(atoms: Atom[], charge: number, multiplicity: number) {
   ui.xyz.value = toXyz(atoms).split('\n').slice(2).join('\n');
   syncMethodOptions();
   engine.reset();
-  const { center, radius } = boundingSphere(atoms);
-  camera.fit(center, radius);
+  fitCamera();
   syncSettingsSummary();
   ui.presetBlurb.textContent = BLURBS[ui.preset.value] ?? 'Your own molecule. Drag its atoms, relax it, and look at its orbitals like any other.';
   updateScene();
@@ -304,6 +368,7 @@ function setMolecule(atoms: Atom[], charge: number, multiplicity: number) {
 
 function loadPreset(id: string) {
   const p = preset(id);
+  setCrystal(p.crystal);
   for (const opt of Array.from(ui.basis.options)) opt.disabled = !p.bases.includes(opt.value as BasisName);
   if (!p.bases.includes(state.basis)) {
     state.basis = p.bases[p.bases.length - 1];
@@ -477,7 +542,12 @@ window.addEventListener('resize', () => (needsRender = true));
 
 // ---- controls ---------------------------------------------------------------------------------
 
-for (const p of PRESETS) ui.preset.add(new Option(p.name, p.id));
+for (const group of Object.keys(GROUP_NAMES) as PresetGroup[]) {
+  const og = document.createElement('optgroup');
+  og.label = GROUP_NAMES[group];
+  for (const p of PRESETS.filter((p) => p.group === group)) og.append(new Option(p.name, p.id));
+  ui.preset.append(og);
+}
 ui.preset.add(new Option('Custom (pasted XYZ)', 'custom'));
 ui.preset.addEventListener('change', () => {
   if (ui.preset.value === 'custom') {
@@ -493,6 +563,7 @@ ui.loadXyz.addEventListener('click', () => {
     const atoms = parseXyz(ui.xyz.value);
     if (atoms.length === 0) throw new Error('No atoms found. Use lines like "O 0 0 0" in Angstrom.');
     ui.preset.value = 'custom';
+    setCrystal(undefined);
     for (const opt of Array.from(ui.basis.options)) opt.disabled = false;
     const n = electronCount({ atoms, charge: state.charge, multiplicity: 1 });
     setMolecule(atoms, state.charge, n % 2 === 0 ? 1 : 2);
@@ -525,6 +596,17 @@ ui.basis.addEventListener('change', () => {
   recompute();
 });
 ui.relax.addEventListener('click', relax);
+ui.showCrystal.addEventListener('input', () => {
+  syncCrystal();
+  updateScene();
+  updateLegend();
+  fitCamera();
+});
+ui.crystalRepeats.addEventListener('input', () => {
+  syncCrystal();
+  updateScene();
+  fitCamera();
+});
 ui.resetGeometry.addEventListener('click', () => {
   cancelRelax();
   state.atoms = state.initialAtoms.map((a) => ({ symbol: a.symbol, xyz: [...a.xyz] as Vec3 }));
