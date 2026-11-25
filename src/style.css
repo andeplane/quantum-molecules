@@ -571,3 +571,22 @@ button.link {
   border: 1.5px solid #c9a55a;
   border-radius: 2px;
 }
+
+.cells-title {
+  margin: 8px 0 2px;
+  font-size: 12px;
+}
+
+.repeats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.repeats label {
+  min-width: 0;
+}
+
+.repeats input {
+  width: 100%;
+}

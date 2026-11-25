@@ -22,13 +22,14 @@ export interface CrystalSpec {
   bond: number;
   /** Put hydrogen on cut bonds at this C-H, Si-H... distance (Angstrom). Not for ionic crystals. */
   capBond?: number;
-  /** Cells repeated along each lattice vector when the preset opens. */
-  repeats: number;
-  /** Most cells along each lattice vector the slider offers. */
+  /** Cells repeated along each lattice vector (Nx, Ny, Nz) when the preset opens. */
+  repeats: Repeats;
+  /** Most cells along each lattice vector the sliders offer. */
   maxRepeats: number;
-  /** Lattice vectors that stay at one cell whatever `repeats` is (graphite's stacking axis). */
-  fixedAxes?: number[];
 }
+
+/** Number of cells along each of the three lattice vectors. */
+export type Repeats = [number, number, number];
 
 export interface CrystalScene {
   /** The computed cluster, hydrogen caps last (bohr). */
@@ -55,12 +56,12 @@ function cartesian(cell: CrystalSpec['cell'], f: Vec3): Vec3 {
   return add(add(scale(cell[0], f[0]), scale(cell[1], f[1])), scale(cell[2], f[2]));
 }
 
-/** Lattice sites in cells i, j, k in [lo, hi] (Angstrom), each once. */
-function latticeSites(spec: CrystalSpec, lo: number, hi: number): { symbol: string; frac: Vec3; xyz: Vec3 }[] {
+/** Lattice sites in cells i, j, k with lo[d] <= index <= hi[d] (Angstrom), each once. */
+function latticeSites(spec: CrystalSpec, lo: Vec3, hi: Vec3): { symbol: string; frac: Vec3; xyz: Vec3 }[] {
   const out: { symbol: string; frac: Vec3; xyz: Vec3 }[] = [];
-  for (let i = lo; i <= hi; i++)
-    for (let j = lo; j <= hi; j++)
-      for (let k = lo; k <= hi; k++)
+  for (let i = lo[0]; i <= hi[0]; i++)
+    for (let j = lo[1]; j <= hi[1]; j++)
+      for (let k = lo[2]; k <= hi[2]; k++)
         for (const s of spec.sites) {
           const frac: Vec3 = [s.frac[0] + i, s.frac[1] + j, s.frac[2] + k];
           out.push({ symbol: s.symbol, frac, xyz: cartesian(spec.cell, frac) });
@@ -69,15 +70,28 @@ function latticeSites(spec: CrystalSpec, lo: number, hi: number): { symbol: stri
 }
 
 /**
- * The computed cluster and the lattice drawn around it, with `repeats` cells along each lattice
- * vector, centred on the cluster. Everything is shifted so the cluster centre is the origin.
+ * How far a sphere of radius r reaches along each lattice vector, in cells: r times the length of
+ * the matching reciprocal vector (row of the inverse cell matrix).
  */
-export function buildCrystal(spec: CrystalSpec, repeats = spec.repeats): CrystalScene {
+function cellsWithin(cell: CrystalSpec['cell'], r: number): Vec3 {
+  const [a, b, c] = cell;
+  const cross = (u: Vec3, v: Vec3): Vec3 => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const bc = cross(b, c);
+  const volume = Math.abs(a[0] * bc[0] + a[1] * bc[1] + a[2] * bc[2]);
+  return [bc, cross(c, a), cross(a, b)].map((v) => Math.ceil((r * Math.hypot(...v)) / volume)) as Vec3;
+}
+
+/**
+ * The computed cluster and the lattice drawn around it, with repeats[d] cells along lattice
+ * vector d, centred on the cluster. Everything is shifted so the cluster centre is the origin.
+ */
+export function buildCrystal(spec: CrystalSpec, repeats: Repeats = spec.repeats): CrystalScene {
   const center = cartesian(spec.cell, spec.center);
   const cutoff = spec.bond * 1.15;
   // Enough cells around the centre to hold the cluster and its neighbours.
-  const reach = Math.ceil((spec.radius + 2 * spec.bond) / Math.min(...spec.cell.map((v) => Math.hypot(...v)))) + 1;
-  const near = latticeSites(spec, -reach - 1, reach + 1);
+  const reach = cellsWithin(spec.cell, spec.radius + 2 * spec.bond);
+  const base = spec.center.map(Math.floor);
+  const near = latticeSites(spec, base.map((b, d) => b - reach[d] - 1) as Vec3, base.map((b, d) => b + reach[d] + 1) as Vec3);
 
   // The cluster: sites within the radius, then drop atoms left hanging by fewer than two bonds
   // (a lone CH3 group or an isolated ion at a corner is not a piece of the crystal).
@@ -100,10 +114,10 @@ export function buildCrystal(spec: CrystalSpec, repeats = spec.repeats): Crystal
   const cluster = [...inside.map((s) => ({ symbol: s.symbol, xyz: toBohr(s.xyz) })), ...caps.map((c) => ({ symbol: 'H', xyz: toBohr(c.xyz) }))];
 
   // Repeated cells centred on the cluster: cells n0 .. n0 + n - 1 along each vector.
-  const n = [0, 1, 2].map((d) => (spec.fixedAxes?.includes(d) ? 1 : repeats));
+  const n = repeats;
   const n0 = spec.center.map((c, d) => Math.floor(c - n[d] / 2 + 0.5)) as Vec3;
   const eps = 1e-6;
-  const block = latticeSites(spec, Math.min(...n0) - 1, Math.max(...n0) + repeats + 1).filter((s) =>
+  const block = latticeSites(spec, n0.map((v) => v - 1) as Vec3, n0.map((v, d) => v + n[d] + 1) as Vec3).filter((s) =>
     s.frac.every((f, d) => f >= n0[d] - eps && f <= n0[d] + n[d] + eps),
   );
   const isCluster = (p: Vec3) => inside.some((s) => dist(s.xyz, p) < 1e-3);
@@ -137,82 +151,74 @@ export function buildCrystal(spec: CrystalSpec, repeats = spec.repeats): Crystal
   return { cluster, caps: caps.length, ghosts, ghostBonds, cellEdges };
 }
 
-const DIAMOND_SITES = (symbol: string) =>
-  (
-    [
-      [0, 0, 0],
-      [0, 0.5, 0.5],
-      [0.5, 0, 0.5],
-      [0.5, 0.5, 0],
-      [0.25, 0.25, 0.25],
-      [0.25, 0.75, 0.75],
-      [0.75, 0.25, 0.75],
-      [0.75, 0.75, 0.25],
-    ] as Vec3[]
-  ).map((frac) => ({ symbol, frac }));
+/**
+ * Diamond and rock salt sit on a face-centred cubic (FCC) lattice. Its smallest repeating cell,
+ * the primitive cell, is the rhombohedron spanned by a/2 (0,1,1), a/2 (1,0,1) and a/2 (1,1,0); it
+ * holds two atoms, and the familiar cube of side a is four of them. With these vectors a point
+ * (x, x, x) a on the cube's body diagonal is again (x, x, x) in fractional coordinates.
+ */
+const fcc = (a: number): [Vec3, Vec3, Vec3] => [
+  [0, a / 2, a / 2],
+  [a / 2, 0, a / 2],
+  [a / 2, a / 2, 0],
+];
 
-const ROCK_SALT_SITES = (cation: string, anion: string) =>
-  (
-    [
-      [0, 0, 0],
-      [0, 0.5, 0.5],
-      [0.5, 0, 0.5],
-      [0.5, 0.5, 0],
-    ] as Vec3[]
-  ).flatMap((f) => [
-    { symbol: cation, frac: f },
-    { symbol: anion, frac: [f[0] + 0.5, f[1], f[2]] as Vec3 },
-  ]);
+/** Two atoms, the second a quarter of the way along the cube diagonal. */
+const DIAMOND_SITES = (symbol: string) => [
+  { symbol, frac: [0, 0, 0] as Vec3 },
+  { symbol, frac: [0.25, 0.25, 0.25] as Vec3 },
+];
 
-const cubic = (a: number): [Vec3, Vec3, Vec3] => [
-  [a, 0, 0],
-  [0, a, 0],
-  [0, 0, a],
+/** Cation at the corner, anion in the middle of the rhombohedron (half the cube diagonal). */
+const ROCK_SALT_SITES = (cation: string, anion: string) => [
+  { symbol: cation, frac: [0, 0, 0] as Vec3 },
+  { symbol: anion, frac: [0.5, 0.5, 0.5] as Vec3 },
 ];
 
 /** Experimental lattice constants at room temperature. */
 export const CRYSTALS: Record<string, CrystalSpec> = {
-  // The ten carbons nearest the centre of the cubic cell form one adamantane cage.
+  // The ten carbons nearest the centre of a cube of side a form one adamantane cage.
   diamond: {
-    cell: cubic(3.567),
+    cell: fcc(3.567),
     sites: DIAMOND_SITES('C'),
     center: [0.5, 0.5, 0.5],
     radius: 1.9,
     bond: 1.5445,
     capBond: 1.09,
-    repeats: 2,
-    maxRepeats: 3,
+    repeats: [3, 3, 3],
+    maxRepeats: 6,
   },
   silicon: {
-    cell: cubic(5.431),
+    cell: fcc(5.431),
     sites: DIAMOND_SITES('Si'),
     center: [0.5, 0.5, 0.5],
     radius: 2.9,
     bond: 2.3517,
     capBond: 1.48,
-    repeats: 2,
-    maxRepeats: 3,
+    repeats: [3, 3, 3],
+    maxRepeats: 6,
   },
-  // Eight ions on the corners of one small cube, an eighth of the cubic cell.
+  // Eight ions on the corners of one small cube, an eighth of the cube of side a.
   nacl: {
-    cell: cubic(5.64),
+    cell: fcc(5.64),
     sites: ROCK_SALT_SITES('Na', 'Cl'),
     center: [0.25, 0.25, 0.25],
     radius: 2.5,
     bond: 2.82,
-    repeats: 1,
-    maxRepeats: 3,
+    repeats: [3, 3, 3],
+    maxRepeats: 6,
   },
   mgo: {
-    cell: cubic(4.212),
+    cell: fcc(4.212),
     sites: ROCK_SALT_SITES('Mg', 'O'),
     center: [0.25, 0.25, 0.25],
     radius: 1.9,
     bond: 2.106,
-    repeats: 1,
-    maxRepeats: 4,
+    repeats: [3, 3, 3],
+    maxRepeats: 6,
   },
-  // One graphene sheet of graphite (AB stacking); the cluster is a pyrene-shaped flake.
+  // Graphite's hexagonal cell is already its smallest: four atoms, two sheets stacked AB. The
+  // cluster is a pyrene-shaped flake of one sheet.
   graphite: {
     cell: [
       [2.464, 0, 0],
@@ -229,8 +235,7 @@ export const CRYSTALS: Record<string, CrystalSpec> = {
     radius: 3.8,
     bond: 1.4226,
     capBond: 1.08,
-    repeats: 4,
+    repeats: [4, 4, 1],
     maxRepeats: 6,
-    fixedAxes: [2],
   },
 };

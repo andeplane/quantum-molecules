@@ -1,4 +1,4 @@
-import { CRYSTALS, buildCrystal, type CrystalScene, type CrystalSpec } from './chem/crystals';
+import { CRYSTALS, buildCrystal, type CrystalScene, type CrystalSpec, type Repeats } from './chem/crystals';
 import { electronCount, parseXyz, toXyz, type Atom } from './chem/molecule';
 import { BLURBS, GROUP_NAMES, PRESETS, preset, type PresetGroup } from './chem/presets';
 import { orbitalLevels } from './chem/orbitals';
@@ -64,7 +64,7 @@ const ui = {
   crystalBox: $('crystal-box'),
   crystalNote: $('crystal-note'),
   showCrystal: $<HTMLInputElement>('show-crystal'),
-  crystalRepeats: $<HTMLInputElement>('crystal-repeats'),
+  crystalRepeats: [$<HTMLInputElement>('crystal-nx'), $<HTMLInputElement>('crystal-ny'), $<HTMLInputElement>('crystal-nz')],
   crystalRepeatsLabel: $('crystal-repeats-label'),
   legendCrystal: $('legend-crystal'),
 };
@@ -178,25 +178,35 @@ function setCrystal(id: string | undefined) {
     state.crystal = null;
     return;
   }
-  ui.crystalRepeats.max = String(spec.maxRepeats);
-  ui.crystalRepeats.value = String(spec.repeats);
+  ui.crystalRepeats.forEach((input, d) => {
+    input.max = String(spec.maxRepeats);
+    input.value = String(spec.repeats[d]);
+  });
   state.crystal = { spec, scene: buildCrystal(spec, spec.repeats) };
   syncCrystal();
+}
+
+/** The atoms of one cell as a count per element, e.g. "1 Na, 1 Cl". */
+function cellFormula(spec: CrystalSpec): string {
+  const n = new Map<string, number>();
+  for (const s of spec.sites) n.set(s.symbol, (n.get(s.symbol) ?? 0) + 1);
+  return [...n].map(([el, k]) => `${k} ${el}`).join(', ');
 }
 
 function syncCrystal() {
   const c = state.crystal;
   if (!c) return;
-  const n = Number(ui.crystalRepeats.value);
+  const n = ui.crystalRepeats.map((input) => Number(input.value)) as Repeats;
   c.scene = buildCrystal(c.spec, n);
-  ui.crystalRepeatsLabel.textContent = [0, 1, 2].map((d) => (c.spec.fixedAxes?.includes(d) ? 1 : n)).join(' × ');
+  ui.crystalRepeatsLabel.textContent = n.join(' × ');
   const { cluster, caps } = c.scene;
   const electrons = electronCount({ atoms: cluster, charge: 0, multiplicity: 1 });
   ui.crystalNote.textContent =
     `Calculated: the ${cluster.length} bright atoms (${electrons} electrons)` +
     (caps ? `, ${cluster.length - caps} from the crystal plus ${caps} hydrogens on the cut bonds. ` : '. ') +
     'The faded atoms are the rest of the crystal, drawn from its structure but not calculated: ' +
-    'the program solves finite molecules, not endless crystals.';
+    'the program solves finite molecules, not endless crystals. ' +
+    `Each gold box is the smallest repeating cell, holding ${c.spec.sites.length} atoms (${cellFormula(c.spec)}).`;
   ui.legendCrystal.hidden = !ui.showCrystal.checked;
 }
 
@@ -602,11 +612,12 @@ ui.showCrystal.addEventListener('input', () => {
   updateLegend();
   fitCamera();
 });
-ui.crystalRepeats.addEventListener('input', () => {
-  syncCrystal();
-  updateScene();
-  fitCamera();
-});
+for (const input of ui.crystalRepeats)
+  input.addEventListener('input', () => {
+    syncCrystal();
+    updateScene();
+    fitCamera();
+  });
 ui.resetGeometry.addEventListener('click', () => {
   cancelRelax();
   state.atoms = state.initialAtoms.map((a) => ({ symbol: a.symbol, xyz: [...a.xyz] as Vec3 }));

@@ -269,15 +269,19 @@ test('shows a piece of a crystal, computed on several workers, inside the lattic
   await expect(page.locator('#crystal-note')).toContainText('8 bright atoms');
   await expect(page.locator('#crystal-note')).toContainText('not calculated');
   await expect(page.locator('#legend-crystal')).toBeVisible();
-  await expect(page.locator('#crystal-repeats-label')).toHaveText('1 × 1 × 1');
-  // The cube of 27 ions in one cell, less the 8 computed ones, drawn see-through.
+  await expect(page.locator('#crystal-note')).toContainText('2 atoms (1 Na, 1 Cl)');
+  await expect(page.locator('#crystal-repeats-label')).toHaveText('3 × 3 × 3');
+  // 3 x 3 x 3 two-ion cells, less the computed ions, drawn see-through.
   const ghosts = () => page.evaluate(() => (window.__qm.renderer as unknown as { ghostSphereCount: number }).ghostSphereCount);
-  expect(await ghosts()).toBe(19);
+  expect(await ghosts()).toBe(83);
   expect(await coverage(page)).toBeGreaterThan(0.02);
-  await page.fill('#crystal-repeats', '2');
-  await page.dispatchEvent('#crystal-repeats', 'input');
-  await expect(page.locator('#crystal-repeats-label')).toHaveText('2 × 2 × 2');
-  expect(await ghosts()).toBe(125 - 8);
+  for (const [id, n] of [['#crystal-nx', '1'], ['#crystal-nz', '5']]) {
+    await page.fill(id, n);
+    await page.dispatchEvent(id, 'input');
+  }
+  await expect(page.locator('#crystal-repeats-label')).toHaveText('1 × 3 × 5');
+  expect(await ghosts()).toBeGreaterThan(0);
+  expect(await ghosts()).not.toBe(83);
   await page.uncheck('#show-crystal');
   await expect(page.locator('#legend-crystal')).toBeHidden();
   expect(await ghosts()).toBe(0);

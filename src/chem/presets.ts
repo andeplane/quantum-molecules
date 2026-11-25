@@ -157,7 +157,7 @@ export const BLURBS: Record<string, string> = {
   aspirin: 'Twenty-one atoms: a benzene ring carrying an acid group and an ester. Its highest filled orbitals are the ring’s π electrons.',
   glucose: 'The sugar our cells burn for energy, in the six-membered ring it forms in water. Twenty-four atoms, with five OH groups around the ring.',
   diamond:
-    'Every carbon bonds to four others in a tetrahedron, without end. The ten carbons in the middle of one cubic cell are calculated; the bonds that would carry on into the crystal end in hydrogen atoms.',
+    'Every carbon bonds to four others in a tetrahedron, without end. The ten carbons of one cage, the middle of the classic cube-shaped cell, are calculated; the bonds that would carry on into the crystal end in hydrogen atoms.',
   silicon:
     'The same structure as diamond with bigger atoms and longer, weaker bonds. Compare the gap between the highest filled and lowest empty levels with diamond’s: smaller, which is why silicon is a semiconductor.',
   graphite:
