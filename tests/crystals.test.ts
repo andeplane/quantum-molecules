@@ -31,7 +31,7 @@ describe('crystal pieces', () => {
   it('draw the rest of the lattice without doubling the computed atoms', () => {
     for (const spec of Object.values(CRYSTALS)) {
       for (let n = 1; n <= spec.maxRepeats; n++) {
-        const s = buildCrystal(spec, n);
+        const s = buildCrystal(spec, [n, n, n]);
         expect(s.ghosts.length).toBeGreaterThan(0);
         expect(s.ghosts.every((g) => g.symbol !== 'H')).toBe(true);
         const lattice = s.cluster.slice(0, s.cluster.length - s.caps);
@@ -41,11 +41,22 @@ describe('crystal pieces', () => {
     }
   });
 
-  it('grow the drawn block with the number of cells', () => {
-    const cells = (n: number) => buildCrystal(CRYSTALS.nacl, n).cellEdges.length;
-    // A block of n^3 cubes has 3 n (n + 1)^2 edges.
-    expect([1, 2, 3].map(cells)).toEqual([12, 54, 144]);
-    // Graphite repeats in the sheet only.
-    expect(buildCrystal(CRYSTALS.graphite, 2).cellEdges.length).toBe(2 * (2 * 3 * 2) + 3 * 3);
+  it('use the smallest repeating cell', () => {
+    // Face-centred cubic: two atoms per cell, a quarter of the cube of side a.
+    for (const id of ['diamond', 'silicon', 'nacl', 'mgo']) {
+      const [a, b, c] = CRYSTALS[id].cell;
+      const volume = Math.abs(a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0]));
+      const side = Math.SQRT2 * Math.hypot(...a);
+      expect(CRYSTALS[id].sites, id).toHaveLength(2);
+      expect(volume / side ** 3, id).toBeCloseTo(1 / 4, 10);
+    }
+  });
+
+  it('grow the drawn block with Nx, Ny and Nz', () => {
+    const edges = ([x, y, z]: number[]) => x * (y + 1) * (z + 1) + y * (x + 1) * (z + 1) + z * (x + 1) * (y + 1);
+    for (const n of [[1, 1, 1], [2, 3, 1], [3, 3, 3], [1, 4, 2]] as [number, number, number][]) {
+      expect(buildCrystal(CRYSTALS.nacl, n).cellEdges.length).toBe(edges(n));
+      expect(buildCrystal(CRYSTALS.graphite, n).cellEdges.length).toBe(edges(n));
+    }
   });
 });

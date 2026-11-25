@@ -28,10 +28,14 @@
         <div id="crystal-box" hidden>
           <p id="crystal-note" class="crystal-note"></p>
           <label class="check" title="Draw the crystal lattice around the calculated piece"><input id="show-crystal" type="checkbox" checked /> Show the crystal around it</label>
-          <label title="How many unit cells to draw along each edge"
-            >Unit cells along each edge: <b id="crystal-repeats-label"></b>
-            <input id="crystal-repeats" type="range" min="1" max="3" step="1" value="1"
-          /></label>
+          <p class="cells-title" title="The gold box is the smallest cell that repeats to fill the crystal">
+            Unit cells drawn: <b id="crystal-repeats-label"></b>
+          </p>
+          <div class="repeats">
+            <label title="Cells along the first lattice vector">N<sub>x</sub> <input id="crystal-nx" type="range" min="1" max="6" step="1" value="3" /></label>
+            <label title="Cells along the second lattice vector">N<sub>y</sub> <input id="crystal-ny" type="range" min="1" max="6" step="1" value="3" /></label>
+            <label title="Cells along the third lattice vector">N<sub>z</sub> <input id="crystal-nz" type="range" min="1" max="6" step="1" value="3" /></label>
+          </div>
         </div>
         <div class="row buttons">
           <button id="relax" class="primary" title="Let the atoms move until the energy is as low as it gets">Relax geometry</button>
