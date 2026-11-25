@@ -6,8 +6,8 @@
     <title>Quantum Molecules</title>
     <meta name="description" content="See the electrons in a molecule: real quantum chemistry (Hartree-Fock and DFT) running live in your browser, with WebGPU electron clouds and orbitals." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%2714%27 fill=%27%235aa2ff%27 opacity=%270.35%27/%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%276%27 fill=%27%23e6e9f2%27/%3E%3C/svg%3E" />
-    <script type="module" crossorigin src="./assets/index-C4bayTib.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-lewZa1t-.css">
+    <script type="module" crossorigin src="./assets/index-UIUMn8K4.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BrAwvQhx.css">
   </head>
   <body>
     <canvas id="view"></canvas>
@@ -26,6 +26,14 @@
         <h2>Molecule</h2>
         <select id="preset" aria-label="Molecule"></select>
         <p id="preset-blurb" class="blurb"></p>
+        <div id="crystal-box" hidden>
+          <p id="crystal-note" class="crystal-note"></p>
+          <label class="check" title="Draw the crystal lattice around the calculated piece"><input id="show-crystal" type="checkbox" checked /> Show the crystal around it</label>
+          <label title="How many unit cells to draw along each edge"
+            >Unit cells along each edge: <b id="crystal-repeats-label"></b>
+            <input id="crystal-repeats" type="range" min="1" max="3" step="1" value="1"
+          /></label>
+        </div>
         <div class="row buttons">
           <button id="relax" class="primary" title="Let the atoms move until the energy is as low as it gets">Relax geometry</button>
           <button id="reset-geometry" title="Put the atoms back where they started">Reset</button>
@@ -108,6 +116,10 @@
         <span class="swatch lobe-neg"></span><span>−</span>
       </div>
       <div class="legend-item" id="legend-atoms" title="Atoms in the usual chemistry colors; sticks are bonds."></div>
+      <div class="legend-item" id="legend-crystal" title="The crystal continues in every direction. Only the bright atoms are calculated." hidden>
+        <span class="swatch ghost"></span><span>Rest of the crystal <span class="muted">(drawn, not calculated)</span></span>
+        <span class="swatch cell"></span><span>Unit cell</span>
+      </div>
       <button id="legend-help" class="link">What does this mean?</button>
     </div>
 
@@ -160,6 +172,15 @@
             holding electrons and LUMO the lowest empty one; chemistry mostly happens between the two. Energies are in
             hartree (1 Ha = 27.2 eV, about 2600 kJ/mol). <b>Watch it solve</b> replays the calculation as it improves its
             guess, step by step, from separate atoms to the finished molecule.
+          </p>
+          <p id="intro-crystals">
+            <b>Crystals</b> such as diamond or table salt are one small block of atoms, the unit cell, repeated without end
+            in every direction. This program solves molecules, not infinite crystals, so for a crystal it cuts out a piece
+            and calculates that: the bright atoms. Where the cut goes through a bond, a hydrogen atom takes the place of the
+            missing neighbour, the usual trick for making a small piece behave like the inside of the crystal (salt and
+            magnesium oxide, held together by charges rather than shared bonds, need none). The faded atoms and the gold
+            unit-cell box show where the piece sits in the crystal. They are drawn from the known crystal structure and are
+            not part of the calculation.
           </p>
           <p>
             <b>Calculation settings</b> let chemists pick the method and basis set, set the charge and spin, or paste their
